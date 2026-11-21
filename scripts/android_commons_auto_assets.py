@@ -34,7 +34,7 @@ def main():
   for c in opts[:a.max_attempts]:
    ext=Path(urllib.parse.urlparse(c["url"]).path).suffix.lower()
    target=Path(a.out_dir)/f"scene{n:03}{ext}"
-   one={"assets":[{"scene":n,"url":c["url"],"path":str(target),"source":c["source"],"license":c["license"],"notes":"Attribution: "+(c["artist"] or c["credit"] or "not supplied")+" | "+c["license_url"]}]}
+   one={"assets":[{"scene":n,"url":c["url"],"path":str(target.resolve()),"source":c["source"],"license":c["license"],"notes":"Attribution: "+(c["artist"] or c["credit"] or "not supplied")+" | "+c["license_url"]}]}
    temp=Path(a.out_dir)/f".download_manifest_{n}.json";temp.parent.mkdir(parents=True,exist_ok=True);temp.write_text(json.dumps(one),encoding="utf-8")
    try:
     subprocess.run([sys.executable,a.fetcher,"--manifest",str(temp),"--out-dir",a.out_dir,"--metadata-out",str(Path(a.out_dir)/f".downloadmeta_{n}.json")],check=True,capture_output=True,text=True)
