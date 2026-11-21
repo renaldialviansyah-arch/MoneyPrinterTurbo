@@ -1,0 +1,28 @@
+name: Android helper smoke tests
+
+on:
+  push:
+    branches:
+      - android-mobile-work
+    paths:
+      - 'scripts/android_storyboard_builder.py'
+      - 'scripts/android_asset_manifest.py'
+      - 'tests/**'
+      - '.github/workflows/android-helper-tests.yml'
+  pull_request:
+    paths:
+      - 'scripts/android_storyboard_builder.py'
+      - 'scripts/android_asset_manifest.py'
+      - 'tests/**'
+      - '.github/workflows/android-helper-tests.yml'
+
+jobs:
+  smoke-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run dependency-free tests
+        run: python -m unittest discover -s tests -p 'test_android_mobile.py' -v
