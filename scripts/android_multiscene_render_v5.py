@@ -36,14 +36,14 @@ def main():
     cmd=[ff,"-y","-hide_banner","-loop","1","-i",str(src),"-vf",vf,"-t",str(dur),"-an","-c:v","libx264","-preset","ultrafast","-crf","25","-pix_fmt","yuv420p",str(dst)]
    else:
     cmd=[ff,"-y","-hide_banner"]
-    cmd+=["-loop","1","-i",str(src)] if ext in IMG else ["-i",str(src)]
+    cmd+=["-loop","1","-i",str(src)] if ext in IMG else ["-stream_loop","-1","-i",str(src)]
     cmd+=["-t",str(dur),"-vf",base+",fps="+str(a.fps),"-an","-c:v","libx264","-preset","ultrafast","-crf","25","-pix_fmt","yuv420p",str(dst)]
    run(cmd);segs.append(dst)
   concat=work/"concat.txt";concat.write_text("\n".join("file '"+str(x).replace("'","'\\''")+"'" for x in segs)+"\n",encoding="utf-8")
   merged=work/"video_only.mp4";run([ff,"-y","-hide_banner","-f","concat","-safe","0","-i",str(concat),"-c:v","libx264","-preset","ultrafast","-crf","25","-pix_fmt","yuv420p","-r",str(a.fps),str(merged)])
   total=sum(float(x["duration_seconds"]) for x in sc);cmd=[ff,"-y","-hide_banner","-i",str(merged),"-i",str(audio)]
   if sub:cmd+=["-i",str(sub)]
-  cmd+=["-map","0:v:0","-map","1:a:0","-c:v","copy","-af","apad","-c:a","aac","-b:a","160k","-t",str(total)]
+  cmd+=["-map","0:v:0","-map","1:a:0","-c:v","copy","-af","apad,atrim=0:"+str(total),"-c:a","aac","-b:a","160k","-t",str(total)]
   if sub:cmd+=["-map","2:s:0","-c:s","mov_text"]
   cmd+=["-movflags","+faststart",str(out)];run(cmd);print("Finished:",out)
  except Exception as e:print("ERROR:",e,file=sys.stderr);return 1
