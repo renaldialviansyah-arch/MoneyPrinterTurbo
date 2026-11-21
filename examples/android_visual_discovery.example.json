@@ -1,0 +1,6 @@
+{
+ "format":"android-mobile-scene-plan-v1",
+ "scenes":[
+  {"scene":1,"narration":"Example","visual_prompt":"cinematic historical city","search_terms":"historical city panorama"}
+ ]
+}
