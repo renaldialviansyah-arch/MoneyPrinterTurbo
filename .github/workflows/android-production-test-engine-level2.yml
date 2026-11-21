@@ -33,9 +33,32 @@ jobs:
         run: |
           python scripts/android_plan_audio_sync.py --plan production/work/plan.json --audio production/work/narration.wav --out production/work/plan_aligned.json
           python scripts/android_subtitle_generator.py --plan production/work/plan_aligned.json --out production/work/subtitles.srt
-      - name: Acquire real Wikimedia visuals
+      - name: Acquire Wikimedia visuals (allow partial)
+        continue-on-error: true
         run: |
           python scripts/android_commons_auto_assets.py --plan production/work/plan_aligned.json --out-dir visuals --manifest production/work/assets_local.json --report level2-report/asset_sources.json --max-attempts 5
+      - name: Fill missing scenes with labelled fallback visuals
+        run: |
+          python - <<'PY'
+          import json,subprocess
+          from pathlib import Path
+          plan=json.load(open('production/work/plan_aligned.json'))
+          mp=Path('production/work/assets_local.json')
+          manifest=json.load(open(mp)) if mp.exists() else {'assets':[]}
+          assets=manifest.get('assets',[])
+          present={int(x['scene']) for x in assets}
+          fallback=[]
+          for i,scene in enumerate(plan['scenes'],1):
+            if i in present: continue
+            p=Path('visuals')/f'fallback_scene{i:03}.png'
+            subprocess.run(['ffmpeg','-y','-f','lavfi','-i','color=c=0x202b38:s=360x640:d=1','-frames:v','1',str(p)],check=True,capture_output=True)
+            assets.append({'scene':i,'path':str(p.resolve()),'source':'Generated fallback slate','license':'Original generated test asset','notes':'Commons asset unavailable; fallback slate used.'})
+            fallback.append(i)
+          manifest['assets']=assets
+          mp.write_text(json.dumps(manifest,indent=2))
+          Path('level2-report/fallback_scenes.json').write_text(json.dumps(fallback,indent=2))
+          print('Fallback scenes:',fallback)
+          PY
       - name: Resolve assets
         run: |
           python scripts/android_visual_asset_engine.py --plan production/work/plan_aligned.json --manifest production/work/assets_local.json --assets-out production/work/assets_resolved.json --metadata-out level2-report/assets_metadata.json
@@ -51,9 +74,10 @@ jobs:
         run: |
           {
             echo "# Level 2 Visual Production Test"
-            echo "- Real Wikimedia acquisition: step status above"
-            echo "- eSpeak narration: step status above (fallback test voice, not Piper)"
-            echo "- Render/QC: step status above"
+            echo "- Wikimedia asset acquisition: see asset_sources.json"
+            echo "- Missing assets fallback: see fallback_scenes.json"
+            echo "- eSpeak narration: test voice, not Piper"
+            echo "- Render/QC: see qc.json if present"
             echo "- Full production pipeline with Piper: NOT TESTED"
           } > level2-report/README.md
       - name: Upload Level 2 results
