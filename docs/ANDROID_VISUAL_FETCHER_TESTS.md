@@ -1,0 +1,1 @@
+Run: `python -m unittest discover -s tests -p 'test_android_visual_fetcher.py'`. Tests cover URL policy only and do not validate network downloads or provider permissions.
