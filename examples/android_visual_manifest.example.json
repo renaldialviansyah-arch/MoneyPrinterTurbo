@@ -1,0 +1,7 @@
+{
+  "assets": [
+    {"scene": 1, "path": "visuals/scene01.jpg", "source": "local file", "license": "unspecified", "notes": "Opening shot"},
+    {"scene": 2, "path": "visuals/scene02.mp4", "source": "local file", "license": "unspecified", "notes": "B-roll"},
+    {"scene": 3, "path": "visuals/scene03.png", "source": "local file", "license": "unspecified", "notes": ""}
+  ]
+}
