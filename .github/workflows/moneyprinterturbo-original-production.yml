@@ -1,0 +1,93 @@
+name: MoneyPrinterTurbo Original Production
+on:
+  workflow_dispatch:
+    inputs:
+      topic:
+        description: "Video topic"
+        required: true
+        default: "Why forgotten cities disappear from history"
+      language:
+        description: "Narration/script language"
+        required: true
+        default: "en-US"
+      paragraphs:
+        description: "Script paragraph count (1-10)"
+        required: true
+        default: "3"
+      aspect:
+        description: "Video orientation"
+        required: true
+        type: choice
+        options:
+          - portrait
+          - landscape
+        default: portrait
+jobs:
+  produce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout MoneyPrinterTurbo core from this fork
+        uses: actions/checkout@v4
+      - name: Install Python and system tools
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install FFmpeg and dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          python -m pip install --upgrade pip
+          pip install --overrides requirements-security.txt -r requirements.txt
+      - name: Create production config
+        env:
+          PEXELS_KEY: ${{ secrets.PEXELS_API_KEY }}
+          MOONSHOT_KEY: ${{ secrets.MOONSHOT_API_KEY }}
+        run: |
+          if [ -z "$PEXELS_KEY" ]; then echo "Missing PEXELS_API_KEY repository secret"; exit 1; fi
+          if [ -z "$MOONSHOT_KEY" ]; then echo "Missing MOONSHOT_API_KEY repository secret"; exit 1; fi
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          pex=os.environ['PEXELS_KEY'].replace('"','\\\"')
+          moon=os.environ['MOONSHOT_KEY'].replace('"','\\\"')
+          config=f'''log_level = "INFO"
+          listen_host = "127.0.0.1"
+          listen_port = 8080
+          video_source = "pexels"
+          pexels_api_keys = ["{pex}"]
+          llm_provider = "moonshot"
+          moonshot_api_key = "{moon}"
+          moonshot_base_url = ""
+          moonshot_model_name = ""
+          '''
+          Path('config.toml').write_text(config)
+          PY
+      - name: Generate video using upstream MoneyPrinterTurbo CLI
+        env:
+          TOPIC: ${{ inputs.topic }}
+          LANGUAGE: ${{ inputs.language }}
+          PARAGRAPHS: ${{ inputs.paragraphs }}
+          ASPECT: ${{ inputs.aspect }}
+        run: |
+          mkdir -p output
+          python cli.py --video-subject "$TOPIC" --video-language "$LANGUAGE" --paragraph-number "$PARAGRAPHS" --video-source pexels --stop-at video
+          python - <<'PY'
+          from pathlib import Path
+          import shutil
+          files=list(Path('storage/tasks').rglob('*.mp4'))
+          if not files: raise SystemExit('No MP4 output found in MoneyPrinterTurbo task storage')
+          files.sort(key=lambda p:p.stat().st_mtime,reverse=True)
+          shutil.copy2(files[0],Path('output/final.mp4'))
+          print('Selected video:',files[0])
+          PY
+      - name: Validate output
+        run: |
+          test -s output/final.mp4
+          ffprobe -v error -show_streams -show_format output/final.mp4 > output/ffprobe.json
+      - name: Upload video artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MoneyPrinterTurbo-original-video
+          path: output/
+          retention-days: 7
