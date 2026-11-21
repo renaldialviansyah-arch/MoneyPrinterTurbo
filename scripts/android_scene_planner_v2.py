@@ -6,7 +6,7 @@ def sentences(text):
  text=re.sub(r"\s+"," ",text.strip())
  return [s.strip() for s in re.split(r"(?<=[.!?])\s+",text) if s.strip()]
 def keywords(s):
- stop={"the","and","but","with","that","this","from","into","when","where","what","how","why","are","was","were","have","has","had","for","not","you","your","they","them","their","about","over","under","then","than","its"}
+ stop={"the","and","but","with","that","this","from","into","when","where","what","how","why","are","was","were","have","has","had","for","not","you","your","they","them","their","about","over","under","then","than","its","yang","dan","atau","dari","pada","untuk","dengan","ini","itu","dalam","akan","telah","sudah","belum","bisa","dapat","adalah","oleh","karena","mereka","kita","kami","saya","dia","sebagai","lebih","saat","juga","tidak","ada","jadi","ke","di","an","the"}
  words=re.findall(r"[A-Za-z0-9'-]+",s.lower())
  useful=[w for w in words if w not in stop and len(w)>2]
  return " ".join(useful[:12]) or s[:100]
