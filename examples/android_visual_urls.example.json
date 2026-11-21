@@ -1,0 +1,5 @@
+{
+ "assets": [
+  {"scene": 1, "url": "https://example.org/scene01.jpg", "source": "example source", "license": "unspecified", "notes": "Replace with actual direct image URL"}
+ ]
+}
