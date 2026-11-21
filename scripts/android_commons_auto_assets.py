@@ -26,11 +26,19 @@ def main():
  p=argparse.ArgumentParser();p.add_argument("--plan",required=True);p.add_argument("--out-dir",default="visuals");p.add_argument("--manifest",default="assets_local.json");p.add_argument("--report",default="asset_sources.json");p.add_argument("--fetcher",default="scripts/android_visual_fetcher_v2.py");p.add_argument("--max-attempts",type=int,default=5);a=p.parse_args()
  plan=json.loads(Path(a.plan).read_text(encoding="utf-8"));scenes=plan.get("scenes")
  if not isinstance(scenes,list) or not scenes:p.error("Scene plan must contain scenes")
- downloaded=[];sources=[];failed=[]
+ downloaded=[];sources=[];failed=[];used_urls=set()
  for n,s in enumerate(scenes,1):
-  q=str(s.get("search_terms") or s.get("narration") or s.get("visual_prompt") or "")[:220]
-  try:opts=candidates(q);chosen=None
-  except Exception as e:opts=[];failed.append({"scene":n,"error":"Search: "+str(e)})
+  queries=[]
+  for raw in (s.get("search_terms"),s.get("narration"),s.get("visual_prompt")):
+   q=str(raw or "").strip()[:220]
+   if q and q not in queries:queries.append(q)
+  opts=[];chosen=None
+  for q in queries:
+   try:
+    for cand in candidates(q):
+     if cand["url"] not in used_urls and all(x["url"]!=cand["url"] for x in opts):opts.append(cand)
+   except Exception as e:failed.append({"scene":n,"query":q,"error":"Search: "+str(e)})
+   if len(opts)>=a.max_attempts:break
   for c in opts[:a.max_attempts]:
    ext=Path(urllib.parse.urlparse(c["url"]).path).suffix.lower()
    target=Path(a.out_dir)/f"scene{n:03}{ext}"
