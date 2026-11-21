@@ -71,7 +71,8 @@ jobs:
           ASPECT: ${{ inputs.aspect }}
         run: |
           mkdir -p output
-          python cli.py --video-subject "$TOPIC" --video-language "$LANGUAGE" --paragraph-number "$PARAGRAPHS" --video-source pexels --stop-at video
+          if [ "$ASPECT" = "landscape" ]; then RATIO="16:9"; else RATIO="9:16"; fi
+          python cli.py --video-subject "$TOPIC" --video-language "$LANGUAGE" --paragraph-number "$PARAGRAPHS" --video-source pexels --video-aspect "$RATIO" --stop-at video
           python - <<'PY'
           from pathlib import Path
           import shutil
