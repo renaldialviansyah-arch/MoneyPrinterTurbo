@@ -2,8 +2,8 @@
 import importlib.util
 import json
 import tempfile
-import unittest
 from pathlib import Path
+import unittest
 
 ROOT=Path(__file__).resolve().parents[1]
 
@@ -32,9 +32,6 @@ class StoryboardTests(unittest.TestCase):
 
     def test_timestamp_hour_boundary(self):
         self.assertEqual(story.ts(3661.25),"01:01:01,250")
-
-    def test_invalid_duration_rejected_by_cli_logic(self):
-        self.assertLessEqual(0,0)
 
 class ManifestTests(unittest.TestCase):
     def test_supported_extensions(self):
