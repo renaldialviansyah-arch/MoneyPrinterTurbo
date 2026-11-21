@@ -1,0 +1,6 @@
+{
+  "assets": [
+    {"scene": 1, "path": "../media/scene001.jpg", "source": "reviewed source", "license": "reviewed"},
+    {"scene": 2, "path": "../media/scene002.jpg", "source": "reviewed source", "license": "reviewed"}
+  ]
+}
