@@ -38,9 +38,9 @@ def main():
    temp=Path(a.out_dir)/f".download_manifest_{n}.json";temp.parent.mkdir(parents=True,exist_ok=True);temp.write_text(json.dumps(one),encoding="utf-8")
    try:
     subprocess.run([sys.executable,a.fetcher,"--manifest",str(temp),"--out-dir",a.out_dir,"--metadata-out",str(Path(a.out_dir)/f".downloadmeta_{n}.json")],check=True,capture_output=True,text=True)
-    chosen=c;downloaded.append({"scene":n,"path":str(target),"source":c["source"],"license":c["license"]});sources.append({"scene":n,**c});break
+    chosen=c;used_urls.add(c["url"]);downloaded.append({"scene":n,"path":str(target),"source":c["source"],"license":c["license"]});sources.append({"scene":n,**c});break
    except Exception as e:failed.append({"scene":n,"title":c["title"],"error":str(e)})
-  if not chosen:failed.append({"scene":n,"query":q,"error":"No successfully downloaded candidate under allow-list"})
+  if not chosen:failed.append({"scene":n,"queries":queries,"error":"No successfully downloaded unique candidate under allow-list"})
  Path(a.manifest).write_text(json.dumps({"assets":downloaded},indent=2,ensure_ascii=False),encoding="utf-8")
  Path(a.report).write_text(json.dumps({"sources":sources,"failures":failed,"license_allowlist":sorted(PERMITTED),"notice":"Review each source page, image relevance, and license terms before publishing."},indent=2,ensure_ascii=False),encoding="utf-8")
  print(f"Assets downloaded: {len(downloaded)}/{len(scenes)}. Manifest: {a.manifest}. Source report: {a.report}")
