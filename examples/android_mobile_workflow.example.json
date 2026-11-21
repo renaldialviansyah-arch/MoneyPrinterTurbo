@@ -1,0 +1,8 @@
+{
+  "topic": "Example short video",
+  "assets": [
+    {"role": "visual", "path": "visual.mp4", "source": "user-provided"},
+    {"role": "audio", "path": "narration.mp3", "source": "user-provided"},
+    {"role": "subtitle", "path": "captions.srt", "source": "user-provided"}
+  ]
+}
