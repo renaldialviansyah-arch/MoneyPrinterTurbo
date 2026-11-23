@@ -1,4 +1,4 @@
-name: MoneyPrinterTurbo Commons Production
+name: MoneyPrinterTurbo Ollama Production
 on:
   workflow_dispatch:
     inputs:
@@ -18,86 +18,90 @@ on:
 jobs:
   produce:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout production branch
+        uses: actions/checkout@v4
+        with:
+          ref: android-mobile-work
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - name: Install dependencies and FFmpeg
         run: |
-          sudo apt-get update && sudo apt-get install -y ffmpeg
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg curl
           python -m pip install --upgrade pip uv
           uv pip install --system --overrides requirements-security.txt -r requirements.txt
-      - name: Configure LLM (Moonshot API)
-        env:
-          MOONSHOT_KEY: ${{ secrets.MOONSHOT_API_KEY }}
-        run: |
-          if [ -z "$MOONSHOT_KEY" ]; then echo "Missing MOONSHOT_API_KEY repository secret"; exit 1; fi
-          cp config.example.toml config.toml
-          python - <<'PY'
-          import os,re
-          from pathlib import Path
-          p=Path('config.toml')
-          text=p.read_text()
-          key=os.environ['MOONSHOT_KEY']
-          text=re.sub(r'(?m)^llm_provider\s*=.*$', 'llm_provider = "moonshot"', text)
-          text=re.sub(r'(?m)^moonshot_api_key\s*=.*$', 'moonshot_api_key = '+repr(key), text)
-          p.write_text(text)
-          check=p.read_text()
-          match=re.search(r'(?m)^moonshot_api_key\s*=\s*(.+)$',check)
-          if not match or match.group(1).strip() in ('""',"''"):
-            raise SystemExit('Moonshot key was not written into config')
-          print('Moonshot config verified: key present (value redacted)')
-          PY
-      - name: Preflight Moonshot authentication before asset downloads
-        env:
-          MOONSHOT_KEY: ${{ secrets.MOONSHOT_API_KEY }}
+      - name: Install and start Ollama
         run: |
           set -euo pipefail
-          response_file="$(mktemp)"
-          status="$(curl --silent --show-error --output "$response_file" --write-out "%{http_code}" --max-time 20 -H "Authorization: Bearer $MOONSHOT_KEY" https://api.moonshot.cn/v1/models || true)"
-          if [ "$status" != "200" ]; then
-            echo "Moonshot authentication preflight failed (HTTP $status)."
-            echo "Check that MOONSHOT_API_KEY is valid for https://api.moonshot.cn/v1."
-            if [ -s "$response_file" ]; then
-              python - "$response_file" <<'PY'
-          import json,sys
-          try:
-            d=json.load(open(sys.argv[1]))
-            print("API error:", (d.get("error") or {}).get("message","response details unavailable"))
-          except Exception:
-            print("Response body unavailable.")
+          curl -fsSL https://ollama.com/install.sh | sh
+          ollama serve > /tmp/ollama.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:11434/api/version >/dev/null; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:11434/api/version >/dev/null || { cat /tmp/ollama.log; exit 1; }
+      - name: Pull local model
+        run: |
+          set -euo pipefail
+          ollama pull qwen3:4b
+          ollama list
+      - name: Configure Ollama provider and preflight inference
+        run: |
+          set -euo pipefail
+          cp config.example.toml config.toml
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          p=Path("config.toml")
+          text=p.read_text()
+          updates={
+            "llm_provider": 'llm_provider = "ollama"',
+            "ollama_base_url": 'ollama_base_url = "http://127.0.0.1:11434"',
+            "ollama_model_name": 'ollama_model_name = "qwen3:4b"',
+          }
+          for key,value in updates.items():
+            pattern=rf"(?m)^{key}\\s*=.*$"
+            if not re.search(pattern,text):
+              raise SystemExit(f"Config key not found: {key}")
+            text=re.sub(pattern,value,text,count=1)
+          p.write_text(text)
+          print("Ollama config verified; provider and model set.")
           PY
-            fi
-            exit 1
-          fi
-          rm -f "$response_file"
-          echo "Moonshot authentication preflight passed."
-      - name: Download Commons images with query fallback
+          response="$(curl --fail --silent --show-error --max-time 180 http://127.0.0.1:11434/api/generate -H 'Content-Type: application/json' -d '{"model":"qwen3:4b","prompt":"Reply with exactly the word READY.","stream":false})"
+          python - "$response" <<'PY'
+          import json,sys
+          d=json.loads(sys.argv[1])
+          text=d.get("response","").strip()
+          if not text: raise SystemExit("Ollama inference preflight returned empty output")
+          print("Ollama inference preflight passed; response received.")
+          PY
+      - name: Download and validate Commons images
         env:
           TOPIC: ${{ inputs.topic }}
         run: |
+          set -euo pipefail
           mkdir -p commons_assets output
           python - <<'PY'
           import urllib.request,urllib.parse,json,re,subprocess,os,time
           from pathlib import Path
           topic=os.environ['TOPIC']
-          headers={'User-Agent':'MoneyPrinterTurboCommonsWorkflow/3.0 (GitHub Actions video pipeline; contact via repository)'}
+          headers={'User-Agent':'MoneyPrinterTurboCommonsWorkflow/4.0 (GitHub Actions; repository workflow)'}
           def fetch(url,tries=4):
             for attempt in range(tries):
               try:return urllib.request.urlopen(urllib.request.Request(url,headers=headers),timeout=30).read()
               except Exception as e:
                 print('retry',attempt+1,e)
                 if attempt==tries-1:raise
-                time.sleep(10*(attempt+1))
-          queries=[topic, ' '.join(topic.split()[:3]), 'historical photographs']
+                time.sleep(5*(attempt+1))
+          queries=[topic,' '.join(topic.split()[:3]),'historical photographs']
           candidates=[];seen_titles=set()
           for query in queries:
             params={'action':'query','list':'search','srsearch':query,'srnamespace':6,'srlimit':30,'format':'json'}
-            searchurl='https://commons.wikimedia.org/w/api.php?'+urllib.parse.urlencode(params)
             try:
-              data=json.loads(fetch(searchurl))
+              data=json.loads(fetch('https://commons.wikimedia.org/w/api.php?'+urllib.parse.urlencode(params)))
               titles=[x['title'] for x in data.get('query',{}).get('search',[]) if x.get('title') not in seen_titles]
               seen_titles.update(titles)
               for offset in range(0,len(titles),10):
@@ -108,12 +112,12 @@ jobs:
                 for page in data.get('query',{}).get('pages',{}).values():
                   info=(page.get('imageinfo') or [{}])[0];meta=info.get('extmetadata',{})
                   lic=meta.get('LicenseShortName',{}).get('value','')
-                  if not lic or re.search(r'Non.?Commercial|No.?Derivatives|\bNC\b|\bND\b',lic,re.I):continue
+                  if not lic or re.search(r'Non.?Commercial|No.?Derivatives|\\bNC\\b|\\bND\\b',lic,re.I):continue
                   url=info.get('thumburl') or info.get('url','')
                   if url and url not in [c['url'] for c in candidates]:
                     candidates.append({'url':url,'title':page.get('title',''),'license':lic,'page':info.get('descriptionurl','')})
-              time.sleep(4)
-            except Exception as e:print('Search query failed',query,e)
+              time.sleep(2)
+            except Exception as e:print('Search query failed:',query,e)
             if len(candidates)>=15:break
           valid=[]
           for c in candidates:
@@ -123,21 +127,22 @@ jobs:
               p=Path(f'commons_assets/image{len(valid)+1:02}.jpg');p.write_bytes(raw)
               chk=subprocess.run(['ffmpeg','-v','error','-i',str(p),'-frames:v','1','-f','null','-'],capture_output=True)
               if chk.returncode:p.unlink(missing_ok=True);continue
-              c['local']=str(p);valid.append(c);print('Validated',c['title'])
+              c['local']=str(p);valid.append(c);print('Validated:',c['title'])
               if len(valid)>=6:break
-              time.sleep(2)
-            except Exception as e:print('Candidate skipped',e)
-          if len(valid)<3:raise SystemExit(f'Only {len(valid)} usable Commons images found. Wikimedia search/download unavailable or filtered.')
+              time.sleep(1)
+            except Exception as e:print('Candidate skipped:',e)
+          if len(valid)<3:raise SystemExit(f'Only {len(valid)} valid images; asset search/download failed or was filtered.')
           Path('output/commons_sources.json').write_text(json.dumps(valid,indent=2,ensure_ascii=False))
           Path('commons_assets/list.txt').write_text(','.join(c['local'] for c in valid))
-          print('Downloaded',len(valid),'images')
+          print('Commons assets ready:',len(valid))
           PY
-      - name: Generate using upstream MoneyPrinterTurbo CLI
+      - name: Generate video with MoneyPrinterTurbo
         env:
           TOPIC: ${{ inputs.topic }}
           LANGUAGE: ${{ inputs.language }}
           ASPECT: ${{ inputs.aspect }}
         run: |
+          set -euo pipefail
           if [ "$ASPECT" = "landscape" ]; then RATIO="16:9"; else RATIO="9:16"; fi
           MATERIALS="$(cat commons_assets/list.txt)"
           python cli.py --video-subject "$TOPIC" --video-language "$LANGUAGE" --video-source local --video-materials "$MATERIALS" --video-aspect "$RATIO" --image-motion zoom --subtitle-enabled --stop-at video
@@ -145,18 +150,27 @@ jobs:
           from pathlib import Path
           import shutil
           files=list(Path('storage/tasks').rglob('*.mp4'))
-          if not files: raise SystemExit('No video output MP4 found')
+          if not files: raise SystemExit('No MP4 output found')
           files.sort(key=lambda p:p.stat().st_mtime,reverse=True)
           shutil.copy2(files[0],Path('output/final.mp4'))
-          print('Output:',files[0])
+          print('Final MP4:',files[0])
           PY
-      - name: Validate video
+      - name: Validate final video
         run: |
+          set -euo pipefail
           test -s output/final.mp4
           ffprobe -v error -show_streams -show_format output/final.mp4 > output/probe.json
-      - name: Upload artifact
+          python - <<'PY'
+          import json
+          d=json.load(open('output/probe.json'))
+          streams=d.get('streams',[])
+          if not any(s.get('codec_type')=='video' for s in streams):raise SystemExit('Output has no video stream')
+          if not any(s.get('codec_type')=='audio' for s in streams):raise SystemExit('Output has no audio stream')
+          print('Video and audio stream validation passed.')
+          PY
+      - name: Upload video artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MoneyPrinterTurbo-Commons-video
+          name: MoneyPrinterTurbo-Ollama-video
           path: output/
           retention-days: 7
