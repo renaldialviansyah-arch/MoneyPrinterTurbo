@@ -70,7 +70,7 @@ jobs:
           p.write_text(text)
           print("Ollama config verified; provider and model set.")
           PY
-          response="$(curl --fail --silent --show-error --max-time 180 http://127.0.0.1:11434/api/generate -H 'Content-Type: application/json' -d '{"model":"qwen3:4b","prompt":"Reply with exactly the word READY.","stream":false})"
+          response="$(curl --fail --silent --show-error --max-time 180 http://127.0.0.1:11434/api/generate -H 'Content-Type: application/json' -d "{\\\"model\\\":\\\"qwen3:4b\\\",\\\"prompt\\\":\\\"Reply with exactly the word READY.\\\",\\\"stream\\\":false}")"
           python - "$response" <<'PY'
           import json,sys
           d=json.loads(sys.argv[1])
