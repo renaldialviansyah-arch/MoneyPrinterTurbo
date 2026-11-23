@@ -21,7 +21,7 @@ def main():
   elif not audio.is_file():p.error("Audio missing")
   run("Planning",[sys.executable,ROOT/"scripts/android_scene_planner_v2.py",script,"--out",plan,"--wpm",a.wpm])
   run("Audio align",[sys.executable,ROOT/"scripts/android_plan_audio_sync.py","--plan",plan,"--audio",audio,"--out",aligned])
-  if a.auto_visuals:run("Automatic visual acquisition",[sys.executable,ROOT/"scripts/android_commons_auto_assets.py","--plan",aligned,"--out-dir",w/"visuals","--manifest",manifest,"--report",w/"asset_sources.json"])
+  if a.auto_visuals:run("Automatic visual acquisition",[sys.executable,ROOT/"scripts/android_commons_auto_assets.py","--plan",aligned,"--out-dir",w/"visuals","--manifest",manifest,"--report",w/"asset_sources.json","--allow-fallback"])
   if not a.subtitle:run("Subtitles",[sys.executable,ROOT/"scripts/android_subtitle_generator.py","--plan",aligned,"--out",srt])
   run("Asset resolution",[sys.executable,ROOT/"scripts/android_visual_asset_engine.py","--plan",aligned,"--manifest",manifest,"--assets-out",assets,"--metadata-out",meta])
   run("Motion rendering",[sys.executable,ROOT/"scripts/android_multiscene_render_v5.py","--plan",aligned,"--assets",assets,"--audio",audio,"--subtitle",srt,"--output",o,"--work-dir",w/"render","--width",a.width,"--height",a.height,"--fps",a.fps,"--motion",a.motion])
