@@ -4,13 +4,13 @@ import json, tempfile, unittest, sys
 from pathlib import Path
 REPO_ROOT=Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path: sys.path.insert(0,str(REPO_ROOT))
-from PIL import Image
+from PIL import Image\nimport random
 from scripts.android_asset_provenance_audit import audit
 
 class FailureModeTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory(); self.root=Path(self.tmp.name)
-        self.good=self.root/'valid.png'; Image.new('RGB',(64,64),(20,40,60)).save(self.good)
+        self.good=self.root/'valid.png'; img=Image.new('RGB',(128,128)); rng=random.Random(11); img.putdata([(rng.randrange(256),rng.randrange(256),rng.randrange(256)) for _ in range(128*128)]); img.save(self.good)
     def tearDown(self): self.tmp.cleanup()
     def manifest(self,name,entries):
         p=self.root/name; p.write_text(json.dumps({'assets':entries}),encoding='utf-8'); return p
