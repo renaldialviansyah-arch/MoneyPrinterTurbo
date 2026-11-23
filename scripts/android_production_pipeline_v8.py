@@ -24,8 +24,9 @@ def main():
   if a.auto_visuals:run("Automatic visual acquisition",[sys.executable,ROOT/"scripts/android_commons_auto_assets.py","--plan",aligned,"--out-dir",w/"visuals","--manifest",manifest,"--report",w/"asset_sources.json","--allow-fallback"])
   if not a.subtitle:run("Subtitles",[sys.executable,ROOT/"scripts/android_subtitle_generator.py","--plan",aligned,"--out",srt])
   run("Asset resolution",[sys.executable,ROOT/"scripts/android_visual_asset_engine.py","--plan",aligned,"--manifest",manifest,"--assets-out",assets,"--metadata-out",meta])
+  run("Strict asset provenance gate",[sys.executable,ROOT/"scripts/android_asset_provenance_audit.py",manifest,"--expected-scenes",str(len(json.loads(aligned.read_text(encoding="utf-8"))["scenes"])),"--require-external","--report",w/"provenance_audit.json"])
   run("Motion rendering",[sys.executable,ROOT/"scripts/android_multiscene_render_v5.py","--plan",aligned,"--assets",assets,"--audio",audio,"--subtitle",srt,"--output",o,"--work-dir",w/"render","--width",a.width,"--height",a.height,"--fps",a.fps,"--motion",a.motion])
-  total=sum(float(x["duration_seconds"]) for x in json.loads(aligned.read_text(encoding="utf-8"))["scenes"]);run("QC",[sys.executable,ROOT/"scripts/android_video_qc.py",o,"--expected-duration",total,"--require-subtitles","--min-width",a.width,"--min-height",a.height,"--report",qc])
+  total=sum(float(x["duration_seconds"]) for x in json.loads(aligned.read_text(encoding="utf-8"))["scenes"]);run("QC",[sys.executable,ROOT/"scripts/android_video_qc.py",o,"--expected-duration",total,"--require-subtitles","--min-width",a.width,"--min-height",a.height,"--asset-manifest",manifest,"--report",qc])
   report={"status":"success","output":str(o),"audio":str(audio),"subtitle":str(srt),"asset_manifest":str(manifest),"qc":str(qc),"motion":a.motion};(w/"pipeline_report.json").write_text(json.dumps(report,indent=2));print(json.dumps(report,indent=2));return 0
  except Exception as e:print("ERROR:",e,file=sys.stderr);return 1
 if __name__=="__main__":raise SystemExit(main())
