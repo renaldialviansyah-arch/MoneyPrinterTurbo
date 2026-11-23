@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Discover and download reuse-licensed Wikimedia Commons image assets directly."""
 import argparse,json,re,urllib.parse,urllib.request,subprocess,shutil
+from PIL import Image,ImageDraw,ImageFont
 from pathlib import Path
 API="https://commons.wikimedia.org/w/api.php"
 UA="AndroidMobileVideoWorkflow/2.0 (image downloader; contact via repository)"
@@ -61,7 +62,36 @@ def main():
    except Exception as e:
     if target.exists():target.unlink()
     failed.append({"scene":n,"title":c["title"],"error":"Download/validation: "+str(e)})
-  if not chosen:failed.append({"scene":n,"queries":queries,"error":"No valid unique candidate could be downloaded"})
+  if not chosen:
+   target=outdir/f"scene{n:03}_fallback.jpg"
+   try:
+    target.parent.mkdir(parents=True,exist_ok=True)
+    W,H=1080,1920;im=Image.new("RGB",(W,H));pix=im.load()
+    seed=n*37;c1=(18+seed%35,25+(seed*2)%35,45+(seed*3)%45);c2=(100+seed%70,40+(seed*5)%70,20+seed%55)
+    for y in range(H):
+     t=y/(H-1);col=tuple(int(c1[k]*(1-t)+c2[k]*t) for k in range(3))
+     for x in range(W):pix[x,y]=col
+    d=ImageDraw.Draw(im,"RGBA")
+    d.ellipse((W*.15,H*.12,W*.85,H*.58),fill=(255,180,80,22))
+    d.polygon([(0,H*.72),(W*.28,H*.42),(W*.52,H*.78),(W*.78,H*.45),(W,H*.73),(W,H),(0,H)],fill=(0,0,0,110))
+    d.rectangle((70,90,W-70,H-90),outline=(255,255,255,70),width=3)
+    raw=str(s.get("narration") or s.get("visual_prompt") or s.get("search_terms") or f"Scene {n}")
+    title=" ".join(re.sub(r"[^A-Za-z0-9À-ÿ ]"," ",raw).strip().split()[:14])[:100]
+    try:font=ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",64)
+    except Exception:font=ImageFont.load_default()
+    lines=[];line=""
+    for word in title.split():
+     if len(line+" "+word)>22:lines.append(line);line=word
+     else:line=(line+" "+word).strip()
+    if line:lines.append(line)
+    yy=int(H*.58)
+    for line in lines[:5]:
+     d.text((100,yy),line,font=font,fill=(255,255,255,235),stroke_width=2,stroke_fill=(0,0,0,130));yy+=90
+    im.save(target,quality=90)
+    item={"scene":n,"path":str(target.resolve()),"source":"generated local cinematic fallback","license":"Generated graphic (no external image)","notes":"Fallback generated locally because Wikimedia retrieval failed.","title":title,"bytes":target.stat().st_size}
+    downloaded.append(item);sources.append({"scene":n,"title":title,"fallback":True,"download_bytes":target.stat().st_size})
+    print(f"Scene {n}: fallback graphic created")
+   except Exception as e:failed.append({"scene":n,"queries":queries,"error":"Fallback generation failed: "+str(e)})
  Path(a.manifest).parent.mkdir(parents=True,exist_ok=True)
  Path(a.manifest).write_text(json.dumps({"assets":downloaded},indent=2,ensure_ascii=False),encoding="utf-8")
  Path(a.report).parent.mkdir(parents=True,exist_ok=True)
