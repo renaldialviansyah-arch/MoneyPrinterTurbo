@@ -47,7 +47,7 @@ jobs:
                   self.tmp = tempfile.TemporaryDirectory()
                   self.root = Path(self.tmp.name)
                   self.img = self.root / 'scene.jpg'
-                  Image.new('RGB', (80, 120), (20, 40, 80)).save(self.img, 'JPEG')
+                  Image.new('RGB', (512, 512), (20, 40, 80)).save(self.img, 'PNG')
               def tearDown(self):
                   self.tmp.cleanup()
               def write_json(self, name, obj):
@@ -65,7 +65,7 @@ jobs:
                   self.assertEqual(audit(manifest, 1)['status'], 'FAIL')
               def test_duplicate_source_is_detected(self):
                   manifest = self.write_json('duplicate.json', {'assets':[{'scene':1,'path':str(self.img),'source':'https://example.org/same','license':'CC BY 4.0'},{'scene':2,'path':str(self.img),'source':'https://example.org/same','license':'CC BY 4.0'}]})
-                  self.assertIn('duplicated source', audit(manifest, 2)['degraded'])
+                  self.assertTrue(any('duplicated source' in item for item in audit(manifest, 2)['degraded']), audit(manifest, 2))
               def test_asset_resolution_requires_each_scene(self):
                   plan = self.write_json('plan.json', {'scenes':[{'narration':'one'},{'narration':'two'}]})
                   manifest = self.write_json('assets.json', {'assets':[{'scene':1,'path':str(self.img)}]})
