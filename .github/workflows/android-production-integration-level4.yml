@@ -34,6 +34,12 @@ jobs:
           ffmpeg -version
           ffprobe -version
           espeak-ng --version
+      - name: Install Python fixture dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install Pillow numpy
+          python -c "from PIL import Image; import numpy; print('Fixture dependencies OK')"
       - name: Prepare test fixtures
         run: |
           set -euo pipefail
