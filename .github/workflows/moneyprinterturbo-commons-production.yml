@@ -50,6 +50,30 @@ jobs:
             raise SystemExit('Moonshot key was not written into config')
           print('Moonshot config verified: key present (value redacted)')
           PY
+      - name: Preflight Moonshot authentication before asset downloads
+        env:
+          MOONSHOT_KEY: ${{ secrets.MOONSHOT_API_KEY }}
+        run: |
+          set -euo pipefail
+          response_file="$(mktemp)"
+          status="$(curl --silent --show-error --output "$response_file" --write-out "%{http_code}" --max-time 20 -H "Authorization: Bearer $MOONSHOT_KEY" https://api.moonshot.cn/v1/models || true)"
+          if [ "$status" != "200" ]; then
+            echo "Moonshot authentication preflight failed (HTTP $status)."
+            echo "Check that MOONSHOT_API_KEY is valid for https://api.moonshot.cn/v1."
+            if [ -s "$response_file" ]; then
+              python - "$response_file" <<'PY'
+          import json,sys
+          try:
+            d=json.load(open(sys.argv[1]))
+            print("API error:", (d.get("error") or {}).get("message","response details unavailable"))
+          except Exception:
+            print("Response body unavailable.")
+          PY
+            fi
+            exit 1
+          fi
+          rm -f "$response_file"
+          echo "Moonshot authentication preflight passed."
       - name: Download Commons images with query fallback
         env:
           TOPIC: ${{ inputs.topic }}
