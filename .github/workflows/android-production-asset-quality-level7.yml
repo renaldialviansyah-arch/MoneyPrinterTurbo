@@ -1,0 +1,84 @@
+name: Android Production Asset Quality Gate Level 7
+on:
+  workflow_dispatch:
+  push:
+    branches: [android-mobile-work]
+    paths:
+      - '.github/workflows/android-production-asset-quality-level7.yml'
+      - 'scripts/android_commons_auto_assets.py'
+      - 'scripts/android_production_pipeline_v8.py'
+      - 'scripts/android_video_qc.py'
+permissions:
+  contents: read
+jobs:
+  asset-quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout production branch
+        uses: actions/checkout@v4
+        with:
+          ref: android-mobile-work
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg espeak-ng fonts-dejavu-core
+          python -m pip install --upgrade pip
+          python -m pip install Pillow numpy
+          ffmpeg -version
+          ffprobe -version
+      - name: Prepare test narration
+        run: |
+          set -euo pipefail
+          mkdir -p production/level7
+          cat > production/level7/narration.txt <<'EOF'
+          Ancient stone bridges reveal how engineering connected distant communities. Tropical forests shelter wildlife and preserve complex ecosystems. Volcanic mountains demonstrate the immense energy shaping our planet.
+          EOF
+      - name: Run pipeline and asset acquisition
+        run: |
+          set -euo pipefail
+          python scripts/android_production_pipeline_v8.py \
+            --script production/level7/narration.txt \
+            --auto-visuals --tts-engine espeak \
+            --output production/level7/final.mp4 \
+            --work-dir production/level7/work \
+            --width 540 --height 960 --fps 24 --motion subtle
+      - name: Independent quality and provenance classification
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json,pathlib,subprocess,sys
+          root=pathlib.Path('production/level7'); work=root/'work'
+          video=root/'final.mp4'; manifest=work/'assets_local.json'; sources=work/'asset_sources.json'; qc=work/'qc.json'
+          assert video.is_file() and video.stat().st_size>15000, 'Video absent or too small'
+          q=json.loads(qc.read_text()); m=json.loads(manifest.read_text()); sr=json.loads(sources.read_text())
+          entries=m.get('assets',[]); scenes=q.get('issues',[])
+          assert entries, 'Asset manifest empty'
+          for e in entries:
+            p=pathlib.Path(e['path']); assert p.is_file() and p.stat().st_size>1200, 'Asset missing/small: '+str(p)
+          fallback=sum(1 for e in entries if 'fallback' in str(e.get('source','')).lower() or 'generated graphic' in str(e.get('license','')).lower())
+          external=sum(1 for e in entries if str(e.get('source','')).startswith('http'))
+          all_sources=external==len(entries)
+          classification='PASS' if q.get('status')=='PASS' and all_sources and fallback==0 else 'DEGRADED'
+          report={'workflow_test_status':'PASS','production_asset_status':classification,
+            'explanation':'Workflow success means the pipeline ran. DEGRADED means the rendered video contains fallback or unverified external provenance and is not considered production-ready.',
+            'video_bytes':video.stat().st_size,'resolution':q.get('resolution'),
+            'duration_seconds':q.get('duration_seconds'),'video_streams':q.get('video_streams'),
+            'audio_streams':q.get('audio_streams'),'subtitle_streams':q.get('subtitle_streams'),
+            'scene_asset_count':len(entries),'external_source_count':external,'fallback_count':fallback,
+            'qc_issues':scenes,'acquisition_status':sr.get('status'),
+            'sources':[{'scene':e.get('scene'),'title':e.get('title'),'source':e.get('source'),'license':e.get('license'),'notes':e.get('notes')} for e in entries]}
+          (root/'level7_quality_report.json').write_text(json.dumps(report,indent=2,ensure_ascii=False))
+          print(json.dumps(report,indent=2,ensure_ascii=False))
+          PY
+      - name: Upload Level 7 quality bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-asset-quality-level7
+          path: production/level7/
+          retention-days: 7
