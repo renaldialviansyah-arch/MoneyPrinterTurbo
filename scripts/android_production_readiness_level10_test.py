@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Level 10 production readiness gate: deterministic local tests, no network/model."""
-import json, subprocess, tempfile, unittest
+import json, subprocess, tempfile, unittest, sys
 from pathlib import Path
+# Ensure repository root is importable when this file is executed directly from scripts/.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 from PIL import Image
 from scripts.android_asset_provenance_audit import audit
 from scripts.android_video_qc import inspect
