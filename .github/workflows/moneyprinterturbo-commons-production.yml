@@ -48,49 +48,54 @@ jobs:
           moonshot_model_name = ""
           ''')
           PY
-      - name: Download Commons images with reusable license filtering
+      - name: Download Commons images with retry and backoff
         env:
           TOPIC: ${{ inputs.topic }}
         run: |
           mkdir -p commons_assets output
           python - <<'PY'
-          import urllib.request,urllib.parse,json,re,subprocess,os
+          import urllib.request,urllib.parse,json,re,subprocess,os,time
           from pathlib import Path
           topic=os.environ['TOPIC']
-          queries=[topic, ' '.join(topic.split()[:4]), topic+' historical']
+          headers={'User-Agent':'MoneyPrinterTurboCommonsWorkflow/2.0 (GitHub Actions; educational video production)'}
+          def fetch(url,tries=5):
+            for attempt in range(tries):
+              try:
+                req=urllib.request.Request(url,headers=headers)
+                return urllib.request.urlopen(req,timeout=40).read()
+              except Exception as e:
+                print(f'Retry {attempt+1}/{tries}: {e}')
+                if attempt==tries-1: raise
+                time.sleep(min(60,15*(attempt+1)))
+          params={'action':'query','generator':'search','gsrsearch':topic,'gsrnamespace':6,'gsrlimit':40,'prop':'imageinfo','iiprop':'url|extmetadata','format':'json'}
+          url='https://commons.wikimedia.org/w/api.php?'+urllib.parse.urlencode(params)
+          data=json.loads(fetch(url))
           candidates=[]
-          for query in queries:
-            params={'action':'query','generator':'search','gsrsearch':query,'gsrnamespace':6,'gsrlimit':30,'prop':'imageinfo','iiprop':'url|extmetadata','format':'json'}
-            req=urllib.request.Request('https://commons.wikimedia.org/w/api.php?'+urllib.parse.urlencode(params),headers={'User-Agent':'MoneyPrinterTurboCommonsWorkflow/1.1 (video workflow)'})
-            try:
-              data=json.loads(urllib.request.urlopen(req,timeout=25).read())
-              for page in data.get('query',{}).get('pages',{}).values():
-                info=(page.get('imageinfo') or [{}])[0]; meta=info.get('extmetadata',{})
-                lic=meta.get('LicenseShortName',{}).get('value','')
-                url=info.get('url','')
-                # Restrict to commercial-compatible licenses and public domain;
-                # exclude NC and ND terms explicitly.
-                if re.search(r'\b(NC|Non.?Commercial|ND|No.?Derivatives)\b',lic,re.I):continue
-                if not re.search(r'(public domain|CC0|CC BY(?:-|$)|CC BY-SA|Creative Commons Attribution)',lic,re.I):continue
-                if not re.search(r'\.(jpg|jpeg|png|webp)(?:\?|$)',url,re.I):continue
-                candidates.append({'url':url,'title':page.get('title',''),'license':lic,'page':info.get('descriptionurl','')})
-            except Exception as e: print('Query issue',query,e)
-          seen=set(); valid=[]
+          for page in data.get('query',{}).get('pages',{}).values():
+            info=(page.get('imageinfo') or [{}])[0]; meta=info.get('extmetadata',{})
+            lic=meta.get('LicenseShortName',{}).get('value','')
+            fileurl=info.get('url','')
+            if re.search(r'\b(NC|Non.?Commercial|ND|No.?Derivatives)\b',lic,re.I):continue
+            if not re.search(r'(public domain|CC0|CC BY(?:-|$)|CC BY-SA|Creative Commons Attribution)',lic,re.I):continue
+            if not re.search(r'\.(jpg|jpeg|png|webp)(?:\?|$)',fileurl,re.I):continue
+            candidates.append({'url':fileurl,'title':page.get('title',''),'license':lic,'page':info.get('descriptionurl','')})
+          valid=[];seen=set()
           for c in candidates:
             if c['url'] in seen:continue
             seen.add(c['url'])
             try:
-              req=urllib.request.Request(c['url'],headers={'User-Agent':'MoneyPrinterTurboCommonsWorkflow/1.1'})
-              raw=urllib.request.urlopen(req,timeout=30).read()
+              raw=fetch(c['url'],tries=4)
               if len(raw)<1500:continue
               ext='.png' if '.png' in c['url'].lower() else '.webp' if '.webp' in c['url'].lower() else '.jpg'
               p=Path(f'commons_assets/image{len(valid)+1:02}{ext}');p.write_bytes(raw)
               check=subprocess.run(['ffmpeg','-v','error','-i',str(p),'-frames:v','1','-f','null','-'],capture_output=True)
               if check.returncode: p.unlink(missing_ok=True);continue
               c['local']=str(p);valid.append(c)
-              if len(valid)>=8:break
-            except Exception as e: print('Candidate error',e)
-          if len(valid)<3:raise SystemExit(f'Only {len(valid)} usable Commons images found; at least 3 needed.')
+              print('Validated:',c['title'])
+              if len(valid)>=6:break
+              time.sleep(3)
+            except Exception as e: print('Candidate skipped:',e)
+          if len(valid)<3:raise SystemExit(f'Only {len(valid)} usable Commons images found; at least 3 needed. Search/download may be rate limited.')
           Path('output/commons_sources.json').write_text(json.dumps(valid,indent=2,ensure_ascii=False))
           Path('commons_assets/list.txt').write_text(','.join(c['local'] for c in valid))
           print('Downloaded',len(valid),'images')
