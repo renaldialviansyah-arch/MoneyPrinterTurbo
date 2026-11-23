@@ -60,14 +60,9 @@ jobs:
         env:
           OUTPUT_NAME: ${{ inputs.output_name }}
         run: |
-          python scripts/android_production_pipeline_v8.py \\
-            --script production/script.txt \\
-            --auto-visuals \\
-            --tts-engine piper \\
-            --model production/voice/model.onnx \\
-            --output "production/$OUTPUT_NAME" \\
-            --work-dir production/work \\
-            --width 720 --height 1280 --fps 24 --motion subtle
+          test -s production/script.txt
+          test -s production/voice/model.onnx
+          python scripts/android_production_pipeline_v8.py --script production/script.txt --auto-visuals --tts-engine piper --model production/voice/model.onnx --output "production/$OUTPUT_NAME" --work-dir production/work --width 720 --height 1280 --fps 24 --motion subtle
       - name: Upload production files
         uses: actions/upload-artifact@v4
         with:
