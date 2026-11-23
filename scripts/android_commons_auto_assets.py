@@ -63,9 +63,13 @@ def main():
   qs=[]
   for raw in [s.get("search_terms"),s.get("visual_prompt"),s.get("narration")]:
    q=str(raw or "").strip();q=re.sub(r"\\|.*$","",q).strip();q=re.sub(r"\\b(documentary cinematic photograph|specific documentary visual of)\\b","",q,flags=re.I).strip()
-   if q and q not in qs:qs.append(q[:180])
-  compact=" ".join(sorted(norm(str(s.get("narration") or s.get("search_terms") or ""))))
-  if compact:qs.append(compact[:160])
+   if q and q not in qs:qs.append(q[:140])
+  rawtext=str(s.get("search_terms") or s.get("visual_prompt") or s.get("narration") or "")
+  words=[x for x in re.findall(r"[A-Za-z0-9]{3,}",rawtext) if x.lower() not in STOP]
+  if words:
+   qs.append(" ".join(words[:6]))
+   if len(words)>=3:qs.append(" ".join(words[:3]))
+  qs=list(dict.fromkeys(qs))[:6]
   opts=[]
   for q in qs[:5]:
    try:
