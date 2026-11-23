@@ -50,7 +50,7 @@ jobs:
           import os,re
           from pathlib import Path
           name=os.environ["OUTPUT_NAME"]
-          if not re.fullmatch(r"[A-Za-z0-9._-]+\\.mp4",name,re.I):
+          if not re.fullmatch(r"[A-Za-z0-9._-]+\.mp4",name,re.I):
               raise SystemExit("Output must be a simple .mp4 filename")
           s=os.environ["VIDEO_SCRIPT"].strip()
           if not s: raise SystemExit("Script cannot be empty")
