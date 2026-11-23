@@ -83,17 +83,20 @@ class FailureModeTests(unittest.TestCase):
         result = audit(self.manifest("count.json", [self.entry()]), 2)
         self.assertEqual(result["status"], "FAIL")
 
-    def test_malformed_json_raises(self):
+    def test_malformed_json_returns_fail_report(self):
         path = self.root / "broken.json"
         path.write_text("{broken", encoding="utf-8")
-        with self.assertRaises(Exception):
-            audit(path, 1)
+        result = audit(path, 1)
+        self.assertEqual(result["status"], "FAIL")
+        self.assertTrue(result["issues"])
+        self.assertIn("invalid JSON", result["issues"][0])
 
     def test_nonlist_assets_fails(self):
         path = self.root / "shape.json"
         path.write_text(json.dumps({"assets": None}), encoding="utf-8")
         result = audit(path, 1)
         self.assertEqual(result["status"], "FAIL")
+        self.assertTrue(result["issues"])
 
     def test_malformed_source_url_is_reported(self):
         result = audit(self.manifest("url.json", [self.entry(source="https://")]), 1)
