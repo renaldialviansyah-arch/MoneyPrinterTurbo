@@ -63,7 +63,7 @@ jobs:
             "ollama_model_name": 'ollama_model_name = "qwen3:4b"',
           }
           for key,value in updates.items():
-            pattern=rf"(?m)^{key}\\s*=.*$"
+            pattern=rf"(?m)^{key}\s*=.*$"
             if not re.search(pattern,text):
               raise SystemExit(f"Config key not found: {key}")
             text=re.sub(pattern,value,text,count=1)
@@ -112,7 +112,7 @@ jobs:
                 for page in data.get('query',{}).get('pages',{}).values():
                   info=(page.get('imageinfo') or [{}])[0];meta=info.get('extmetadata',{})
                   lic=meta.get('LicenseShortName',{}).get('value','')
-                  if not lic or re.search(r'Non.?Commercial|No.?Derivatives|\\bNC\\b|\\bND\\b',lic,re.I):continue
+                  if not lic or re.search(r'Non.?Commercial|No.?Derivatives|\bNC\b|\bND\b',lic,re.I):continue
                   url=info.get('thumburl') or info.get('url','')
                   if url and url not in [c['url'] for c in candidates]:
                     candidates.append({'url':url,'title':page.get('title',''),'license':lic,'page':info.get('descriptionurl','')})
