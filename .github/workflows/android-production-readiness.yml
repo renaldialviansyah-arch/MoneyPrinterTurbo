@@ -1,0 +1,47 @@
+name: Production Readiness Test (Visual + Render + QC)
+on:
+  workflow_dispatch:
+jobs:
+  readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout production code
+        uses: actions/checkout@v4
+        with:
+          ref: android-mobile-work
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg espeak
+          python -m pip install --upgrade pip
+          python -m pip install Pillow
+          python -c 'from PIL import Image,ImageDraw; print("Pillow ready")'
+          ffmpeg -version | head -1
+          ffprobe -version | head -1
+      - name: Create test narration
+        run: |
+          mkdir -p production/readiness
+          cat > production/readiness/script.txt <<'EOF'
+          The ancient city of Pompeii was buried beneath volcanic ash in the year seventy nine. Archaeologists later uncovered streets, homes, and paintings that reveal everyday life in the Roman world.
+          EOF
+      - name: Run visual acquisition, voice, render, and QC
+        run: |
+          python scripts/android_production_pipeline_v8.py \
+            --script production/readiness/script.txt \
+            --auto-visuals --tts-engine espeak \
+            --output production/readiness/readiness.mp4 \
+            --work-dir production/readiness/work \
+            --width 540 --height 960 --fps 24 --motion subtle
+      - name: Upload readiness report and video
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-readiness-result
+          path: |
+            production/readiness/readiness.mp4
+            production/readiness/work/pipeline_report.json
+            production/readiness/work/asset_sources.json
+            production/readiness/work/qc.json
+          if-no-files-found: warn
+          retention-days: 7
