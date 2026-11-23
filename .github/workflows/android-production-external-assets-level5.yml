@@ -1,0 +1,81 @@
+name: Android Production External Asset Test Level 5
+on:
+  workflow_dispatch:
+  push:
+    branches: [android-mobile-work]
+    paths:
+      - 'scripts/android_commons_auto_assets.py'
+      - '.github/workflows/android-production-external-assets-level5.yml'
+permissions:
+  contents: read
+jobs:
+  external-assets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout production branch
+        uses: actions/checkout@v4
+        with:
+          ref: android-mobile-work
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install and validate dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          python -m pip install --upgrade pip
+          python -m pip install Pillow
+          python -c "from PIL import Image, ImageDraw, ImageFont; print('Pillow verified')"
+          ffmpeg -version
+      - name: Prepare real-world scene plan
+        run: |
+          set -euo pipefail
+          mkdir -p production/external-assets-level5
+          python - <<'PY'
+          import json,pathlib
+          p=pathlib.Path('production/external-assets-level5/plan.json')
+          scenes=[
+            {'scene':1,'narration':'A historic stone bridge crossing a river in a European city','search_terms':'historic stone bridge river','visual_prompt':'historic stone bridge over river'},
+            {'scene':2,'narration':'A forest with tall trees and sunlight','search_terms':'sunlight forest trees','visual_prompt':'sunlight through tall forest trees'},
+            {'scene':3,'narration':'A mountain landscape with snow peaks','search_terms':'snow mountain landscape','visual_prompt':'snow capped mountain landscape'}
+          ]
+          p.write_text(json.dumps({'scenes':scenes},indent=2),encoding='utf-8')
+          PY
+      - name: Run Wikimedia acquisition with fallback safety
+        run: |
+          set -euo pipefail
+          python scripts/android_commons_auto_assets.py             --plan production/external-assets-level5/plan.json             --out-dir production/external-assets-level5/visuals             --manifest production/external-assets-level5/assets_manifest.json             --report production/external-assets-level5/asset_sources.json             --max-attempts 18 --allow-fallback
+      - name: Independently validate images, manifest, attribution, and source report
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json,pathlib,sys
+          from PIL import Image
+          root=pathlib.Path('production/external-assets-level5')
+          m=json.loads((root/'assets_manifest.json').read_text(encoding='utf-8'))
+          report=json.loads((root/'asset_sources.json').read_text(encoding='utf-8'))
+          entries=m.get('assets',[])
+          assert len(entries)==3, f'Expected 3 assets, got {len(entries)}'
+          verified=0; fallback=0
+          for i,item in enumerate(entries,1):
+              path=pathlib.Path(item['path'])
+              assert path.is_file() and path.stat().st_size>1200, f'Asset missing/small: {path}'
+              with Image.open(path) as im: im.verify()
+              src=str(item.get('source',''))
+              lic=str(item.get('license',''))
+              if src.startswith('http') and 'fallback' not in src.lower() and 'fallback' not in lic.lower():
+                  verified+=1
+                  assert lic.strip(), f'No license metadata on sourced asset {i}'
+              else:fallback+=1
+          (root/'validation.json').write_text(json.dumps({'status':'PASS','scene_count':len(entries),'verified_external_sources':verified,'fallback_assets':fallback,'note':'This test verifies runtime acquisition and file/manifest integrity; it does not certify legal suitability or editorial quality.'},indent=2),encoding='utf-8')
+          print('EXTERNAL ASSET TEST PASS',verified,'externally sourced,',fallback,'fallback')
+          PY
+      - name: Upload test bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: external-assets-level5
+          path: production/external-assets-level5/
+          retention-days: 7
