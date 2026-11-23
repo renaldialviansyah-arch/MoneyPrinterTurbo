@@ -1,0 +1,101 @@
+name: Android Production Resilience Level 9
+on:
+  workflow_dispatch:
+  push:
+    branches: [android-mobile-work]
+    paths:
+      - '.github/workflows/android-production-resilience-level9.yml'
+      - 'scripts/android_asset_provenance_audit.py'
+      - 'scripts/android_visual_asset_engine.py'
+      - 'scripts/android_subtitle_generator.py'
+      - 'scripts/android_video_qc.py'
+permissions:
+  contents: read
+jobs:
+  resilience:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout production branch
+        uses: actions/checkout@v4
+        with:
+          ref: android-mobile-work
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install minimal dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          python -m pip install --upgrade pip
+          python -m pip install Pillow
+      - name: Run isolated resilience tests
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, tempfile, unittest
+          from pathlib import Path
+          from PIL import Image
+          from scripts.android_asset_provenance_audit import audit
+          from scripts.android_visual_asset_engine import build
+          from scripts.android_subtitle_generator import generate
+          from scripts.android_video_qc import inspect
+
+          class ResilienceTests(unittest.TestCase):
+              def setUp(self):
+                  self.tmp = tempfile.TemporaryDirectory()
+                  self.root = Path(self.tmp.name)
+                  self.img = self.root / 'scene.jpg'
+                  Image.new('RGB', (80, 120), (20, 40, 80)).save(self.img, 'JPEG')
+              def tearDown(self):
+                  self.tmp.cleanup()
+              def write_json(self, name, obj):
+                  p = self.root / name
+                  p.write_text(json.dumps(obj), encoding='utf-8')
+                  return p
+              def test_external_asset_audit_pass(self):
+                  manifest = self.write_json('manifest.json', {'assets':[{'scene':1,'path':str(self.img),'source':'https://commons.wikimedia.org/wiki/File:Example','license':'CC BY 4.0'}]})
+                  self.assertEqual(audit(manifest, 1)['status'], 'PASS')
+              def test_fallback_asset_is_degraded_not_silently_passed(self):
+                  manifest = self.write_json('fallback.json', {'assets':[{'scene':1,'path':str(self.img),'source':'generated fallback graphic','license':'original generated graphic'}]})
+                  self.assertEqual(audit(manifest, 1)['status'], 'DEGRADED')
+              def test_missing_asset_fails_audit(self):
+                  manifest = self.write_json('missing.json', {'assets':[{'scene':1,'path':str(self.root/'missing.jpg'),'source':'https://example.org/image','license':'CC BY 4.0'}]})
+                  self.assertEqual(audit(manifest, 1)['status'], 'FAIL')
+              def test_duplicate_source_is_detected(self):
+                  manifest = self.write_json('duplicate.json', {'assets':[{'scene':1,'path':str(self.img),'source':'https://example.org/same','license':'CC BY 4.0'},{'scene':2,'path':str(self.img),'source':'https://example.org/same','license':'CC BY 4.0'}]})
+                  self.assertIn('duplicated source', audit(manifest, 2)['degraded'])
+              def test_asset_resolution_requires_each_scene(self):
+                  plan = self.write_json('plan.json', {'scenes':[{'narration':'one'},{'narration':'two'}]})
+                  manifest = self.write_json('assets.json', {'assets':[{'scene':1,'path':str(self.img)}]})
+                  with self.assertRaises(ValueError): build(plan, manifest)
+              def test_subtitle_timing_and_text(self):
+                  srt = generate({'scenes':[{'duration_seconds':2.5,'narration':'A valid test caption.'},{'duration_seconds':3,'subtitle_text':'Second caption.'}]})
+                  self.assertIn('00:00:02,500 --> 00:00:05,500', srt)
+                  self.assertIn('Second caption.', srt)
+              def test_qc_rejects_nonexistent_video(self):
+                  with self.assertRaises(Exception): inspect(self.root/'not-a-video.mp4')
+              def test_qc_accepts_fixture_with_video_audio(self):
+                  fixture=self.root/'fixture.mp4'
+                  import subprocess
+                  subprocess.run(['ffmpeg','-y','-v','error','-f','lavfi','-i','color=c=blue:s=160x240:d=2','-f','lavfi','-i','sine=frequency=440:duration=2','-shortest','-c:v','libx264','-pix_fmt','yuv420p','-c:a','aac',str(fixture)],check=True)
+                  q=inspect(fixture, expected_duration=2, min_width=100, min_height=100)
+                  self.assertEqual(q['status'],'PASS',q)
+          suite=unittest.defaultTestLoader.loadTestsFromTestCase(ResilienceTests)
+          result=unittest.TextTestRunner(verbosity=2).run(suite)
+          if not result.wasSuccessful(): raise SystemExit(1)
+          print('LEVEL9 RESILIENCE TESTS: PASS')
+          PY
+      - name: Upload test report marker
+        if: always()
+        run: |
+          mkdir -p production/level9
+          printf 'Level 9 resilience test job completed. See workflow logs for individual tests.\n' > production/level9/test-report.txt
+      - name: Upload Level 9 bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-resilience-level9
+          path: production/level9/
+          retention-days: 7
