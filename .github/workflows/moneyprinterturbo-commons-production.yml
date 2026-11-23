@@ -27,8 +27,8 @@ jobs:
       - name: Install dependencies and FFmpeg
         run: |
           sudo apt-get update && sudo apt-get install -y ffmpeg
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt -c requirements-security.txt
+          python -m pip install --upgrade pip uv
+          uv pip install --system --overrides requirements-security.txt -r requirements.txt
       - name: Configure LLM (no stock API)
         env:
           MOONSHOT_KEY: ${{ secrets.MOONSHOT_API_KEY }}
