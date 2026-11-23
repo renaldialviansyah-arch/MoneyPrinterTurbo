@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Wikimedia licensed image retrieval with original generated-card fallback."""
-import argparse,json,re,urllib.parse,urllib.request,subprocess,shutil,unicodedata
+import argparse,json,re,urllib.parse,urllib.request,subprocess,shutil,unicodedata,time
 from pathlib import Path
 API="https://commons.wikimedia.org/w/api.php";UA="MoneyPrinterTurboProduction/3.0"
 PERMITTED={"CC0","Public domain","Public Domain","CC BY 4.0","CC BY 3.0","CC BY 2.0","CC BY-SA 4.0","CC BY-SA 3.0","CC BY-SA 2.0"}
@@ -8,17 +8,25 @@ STOP={"the","and","but","with","that","this","from","into","when","where","what"
 def norm(s):
  s=unicodedata.normalize("NFKD",s or "").encode("ascii","ignore").decode().lower();return set(re.findall(r"[a-z0-9]{3,}",s))-STOP
 def request(q):
- params={"action":"query","generator":"search","gsrsearch":q,"gsrnamespace":6,"gsrlimit":30,"prop":"imageinfo","iiprop":"url|extmetadata|size","format":"json"}
- req=urllib.request.Request(API+"?"+urllib.parse.urlencode(params),headers={"User-Agent":UA})
- with urllib.request.urlopen(req,timeout=25) as r:return json.loads(r.read().decode())
+ last=None
+ for attempt in range(4):
+  try:
+   params={"action":"query","generator":"search","gsrsearch":q,"gsrnamespace":6,"gsrlimit":30,"prop":"imageinfo","iiprop":"url|extmetadata|size","format":"json"}
+   req=urllib.request.Request(API+"?"+urllib.parse.urlencode(params),headers={"User-Agent":UA+" (github.com/renaldialviansyah-arch/MoneyPrinterTurbo)"})
+   with urllib.request.urlopen(req,timeout=25) as r:return json.loads(r.read().decode())
+  except Exception as e:
+   last=e;time.sleep(1+attempt*2)
+ raise last
 def plain(x):return re.sub(r"<[^>]+>"," ",(x or {}).get("value","")).strip()
 def candidates(q):
  pages=request(q).get("query",{}).get("pages",{}) or {};out=[];qw=norm(q)
  for page in pages.values():
   info=(page.get("imageinfo") or [{}])[0];m=info.get("extmetadata") or {};lic=plain(m.get("LicenseShortName"));url=info.get("url","")
-  if lic not in PERMITTED or not url:continue
+  lic_norm=lic.strip().lower().replace(" ","")
+  permitted=lic in PERMITTED or lic_norm in {"ccby4.0","ccby3.0","ccby2.0","ccby-sa4.0","ccby-sa3.0","ccby-sa2.0","cc0","publicdomain","publicdomainmark"}
+  if not permitted or not url:continue
   ext=Path(urllib.parse.urlparse(url).path).suffix.lower()
-  if ext not in (".jpg",".jpeg",".png",".webp") or int(info.get("size",0))<25000:continue
+  if ext not in (".jpg",".jpeg",".png",".webp") or int(info.get("size",0))<12000:continue
   title=page.get("title","");score=len(qw&norm(title))
   if score:out.append({"title":title,"url":url,"source":info.get("descriptionurl",""),"license":lic,"license_url":plain(m.get("LicenseUrl")),"artist":plain(m.get("Artist")),"credit":plain(m.get("Credit")),"attribution":plain(m.get("Attribution")),"ext":ext,"score":score,"size":int(info.get("size",0))})
  return sorted(out,key=lambda x:(x["score"],x["size"]),reverse=True)
