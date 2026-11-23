@@ -19,12 +19,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: android-mobile-work
-      - name: Install tools
+      - name: Install tools and image dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y ffmpeg python3-pil
           python -m pip install --upgrade pip
-          python -m pip install piper-tts
+          python -m pip install piper-tts Pillow
+          python - <<'PY'
+          import sys
+          from PIL import Image, ImageDraw, ImageFont
+          print("Python:",sys.executable)
+          print("Pillow:",Image.__version__)
+          print("PIL import and image classes verified")
+          PY
       - name: Download Indonesian Piper voice automatically
         run: |
           mkdir -p production/voice production/work
@@ -43,7 +50,7 @@ jobs:
           import os,re
           from pathlib import Path
           name=os.environ["OUTPUT_NAME"]
-          if not re.fullmatch(r"[A-Za-z0-9._-]+\.mp4",name,re.I):
+          if not re.fullmatch(r"[A-Za-z0-9._-]+\\.mp4",name,re.I):
               raise SystemExit("Output must be a simple .mp4 filename")
           s=os.environ["VIDEO_SCRIPT"].strip()
           if not s: raise SystemExit("Script cannot be empty")
@@ -53,13 +60,13 @@ jobs:
         env:
           OUTPUT_NAME: ${{ inputs.output_name }}
         run: |
-          python scripts/android_production_pipeline_v8.py \
-            --script production/script.txt \
-            --auto-visuals \
-            --tts-engine piper \
-            --model production/voice/model.onnx \
-            --output "production/$OUTPUT_NAME" \
-            --work-dir production/work \
+          python scripts/android_production_pipeline_v8.py \\
+            --script production/script.txt \\
+            --auto-visuals \\
+            --tts-engine piper \\
+            --model production/voice/model.onnx \\
+            --output "production/$OUTPUT_NAME" \\
+            --work-dir production/work \\
             --width 720 --height 1280 --fps 24 --motion subtle
       - name: Upload production files
         uses: actions/upload-artifact@v4
