@@ -1,0 +1,42 @@
+name: Moonshot API Validation
+on:
+  workflow_dispatch:
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check Moonshot API key securely
+        env:
+          MOONSHOT_API_KEY: ${{ secrets.MOONSHOT_API_KEY }}
+        run: |
+          if [ -z "$MOONSHOT_API_KEY" ]; then
+            echo "::error::MOONSHOT_API_KEY repository secret is missing"
+            exit 1
+          fi
+          python - <<'PY'
+          import os, urllib.request, urllib.error, json
+          key=os.environ['MOONSHOT_API_KEY']
+          req=urllib.request.Request(
+            'https://api.moonshot.ai/v1/models',
+            headers={'Authorization':'Bearer '+key,'Content-Type':'application/json'},
+            method='GET')
+          try:
+            with urllib.request.urlopen(req,timeout=20) as r:
+              data=json.loads(r.read())
+              print('AUTHENTICATION_OK')
+              models=[x.get('id','') for x in data.get('data',[])]
+              print('Models endpoint reachable; model IDs returned:',len(models))
+              print('Sample model IDs:',', '.join(models[:8]))
+          except urllib.error.HTTPError as e:
+            body=e.read().decode('utf-8','replace')
+            print('HTTP_STATUS:',e.code)
+            if e.code in (401,403):
+              print('AUTHENTICATION_FAILED: Moonshot rejected the key (details redacted)')
+            else:
+              print('API_ERROR: HTTP status',e.code,'(response details redacted)')
+            raise SystemExit(1)
+          except Exception as e:
+            print('NETWORK_OR_API_ERROR:',type(e).__name__)
+            raise SystemExit(1)
+          PY
