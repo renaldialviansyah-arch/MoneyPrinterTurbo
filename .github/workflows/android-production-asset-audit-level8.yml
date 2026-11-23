@@ -1,0 +1,80 @@
+name: Android Production Asset Audit Level 8
+on:
+  workflow_dispatch:
+  push:
+    branches: [android-mobile-work]
+    paths:
+      - '.github/workflows/android-production-asset-audit-level8.yml'
+      - 'scripts/android_asset_provenance_audit.py'
+      - 'scripts/android_commons_auto_assets.py'
+      - 'scripts/android_production_pipeline_v8.py'
+      - 'scripts/android_video_qc.py'
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout production branch
+        uses: actions/checkout@v4
+        with:
+          ref: android-mobile-work
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg espeak-ng fonts-dejavu-core
+          python -m pip install --upgrade pip
+          python -m pip install Pillow numpy
+      - name: Create test script
+        run: |
+          set -euo pipefail
+          mkdir -p production/level8
+          cat > production/level8/narration.txt <<'EOF'
+          Ancient bridges connected communities across rivers and valleys. Forest ecosystems protect biodiversity and influence climate. Volcanic landscapes reveal the forces that shape the Earth.
+          EOF
+      - name: Run complete pipeline (fallback permitted for diagnostics)
+        run: |
+          set -euo pipefail
+          python scripts/android_production_pipeline_v8.py \
+            --script production/level8/narration.txt \
+            --auto-visuals --tts-engine espeak \
+            --output production/level8/final.mp4 \
+            --work-dir production/level8/work \
+            --width 540 --height 960 --fps 24 --motion subtle
+      - name: Independent provenance audit
+        run: |
+          set -euo pipefail
+          python scripts/android_asset_provenance_audit.py \
+            production/level8/work/assets_local.json \
+            --expected-scenes 3 \
+            --report production/level8/work/asset_audit.json
+          python - <<'PY'
+          import json,pathlib,subprocess
+          root=pathlib.Path('production/level8'); work=root/'work'
+          video=root/'final.mp4'; qc=json.loads((work/'qc.json').read_text())
+          audit=json.loads((work/'asset_audit.json').read_text())
+          assert video.is_file() and video.stat().st_size>15000, 'MP4 missing or too small'
+          assert qc.get('video_streams',0)>=1 and qc.get('audio_streams',0)>=1, 'Missing audio/video streams'
+          assert qc.get('subtitle_streams',0)>=1, 'Subtitle stream missing'
+          assert qc.get('resolution')=='540x960', 'Unexpected dimensions'
+          assert float(qc.get('duration_seconds',0))>3, 'Duration too short'
+          report={'technical_test':'PASS','asset_audit_status':audit['status'],
+            'production_readiness':'READY' if audit['status']=='PASS' else 'NOT_READY',
+            'video_bytes':video.stat().st_size,'resolution':qc['resolution'],
+            'duration_seconds':qc['duration_seconds'],'streams':{'video':qc['video_streams'],'audio':qc['audio_streams'],'subtitles':qc['subtitle_streams']},
+            'audit':audit,'note':'Workflow technical success does not override a DEGRADED asset audit.'}
+          (root/'level8_report.json').write_text(json.dumps(report,indent=2,ensure_ascii=False))
+          print(json.dumps(report,indent=2,ensure_ascii=False))
+          PY
+      - name: Upload Level 8 report and production bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-asset-audit-level8
+          path: production/level8/
+          retention-days: 7
