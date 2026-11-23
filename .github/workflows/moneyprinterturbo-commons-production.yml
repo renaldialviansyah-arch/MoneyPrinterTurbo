@@ -1,0 +1,124 @@
+name: MoneyPrinterTurbo Commons Production
+on:
+  workflow_dispatch:
+    inputs:
+      topic:
+        description: "Video topic"
+        required: true
+        default: "The mysterious history of forgotten cities"
+      language:
+        description: "Video script language"
+        required: true
+        default: "en-US"
+      aspect:
+        description: "Orientation"
+        type: choice
+        options: [portrait, landscape]
+        default: portrait
+jobs:
+  produce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies and FFmpeg
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          python -m pip install --upgrade pip
+          pip install --overrides requirements-security.txt -r requirements.txt
+      - name: Configure LLM (no stock API)
+        env:
+          MOONSHOT_KEY: ${{ secrets.MOONSHOT_API_KEY }}
+        run: |
+          if [ -z "$MOONSHOT_KEY" ]; then echo "Missing MOONSHOT_API_KEY repository secret"; exit 1; fi
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          key=os.environ['MOONSHOT_KEY'].replace('"','\\\"')
+          Path('config.toml').write_text(f'''log_level = "INFO"
+          listen_host = "127.0.0.1"
+          listen_port = 8080
+          video_source = "local"
+          llm_provider = "moonshot"
+          moonshot_api_key = "{key}"
+          moonshot_base_url = ""
+          moonshot_model_name = ""
+          ''')
+          PY
+      - name: Download Commons images
+        env:
+          TOPIC: ${{ inputs.topic }}
+        run: |
+          mkdir -p commons_assets output
+          python - <<'PY'
+          import urllib.request,urllib.parse,json,re,subprocess
+          from pathlib import Path
+          q=os.environ.get('TOPIC','') if False else None
+          import os
+          topic=os.environ['TOPIC']
+          queries=[topic, ' '.join(topic.split()[:4]), topic+' historical']
+          candidates=[]
+          for query in queries:
+            params={'action':'query','generator':'search','gsrsearch':query,'gsrnamespace':6,'gsrlimit':25,'prop':'imageinfo','iiprop':'url|extmetadata','format':'json'}
+            req=urllib.request.Request('https://commons.wikimedia.org/w/api.php?'+urllib.parse.urlencode(params),headers={'User-Agent':'MoneyPrinterTurboCommonsWorkflow/1.0'})
+            try:
+              data=json.loads(urllib.request.urlopen(req,timeout=25).read())
+              for page in data.get('query',{}).get('pages',{}).values():
+                info=(page.get('imageinfo') or [{}])[0]; meta=info.get('extmetadata',{})
+                lic=meta.get('LicenseShortName',{}).get('value','')
+                url=info.get('url','')
+                if not re.search(r'(public domain|CC0|CC BY|CC BY-SA|Creative Commons)',lic,re.I):continue
+                if not re.search(r'\.(jpg|jpeg|png|webp)(?:\?|$)',url,re.I):continue
+                candidates.append({'url':url,'title':page.get('title',''),'license':lic,'page':info.get('descriptionurl','')})
+            except Exception as e: print('Query issue',query,e)
+          seen=set(); valid=[]
+          for c in candidates:
+            if c['url'] in seen:continue
+            seen.add(c['url'])
+            try:
+              req=urllib.request.Request(c['url'],headers={'User-Agent':'MoneyPrinterTurboCommonsWorkflow/1.0'})
+              raw=urllib.request.urlopen(req,timeout=30).read()
+              if len(raw)<1500:continue
+              ext='.png' if '.png' in c['url'].lower() else '.webp' if '.webp' in c['url'].lower() else '.jpg'
+              p=Path(f'commons_assets/image{len(valid)+1:02}{ext}');p.write_bytes(raw)
+              check=subprocess.run(['ffmpeg','-v','error','-i',str(p),'-frames:v','1','-f','null','-'],capture_output=True)
+              if check.returncode: p.unlink(missing_ok=True);continue
+              c['local']=str(p);valid.append(c)
+              if len(valid)>=8:break
+            except Exception as e: print('Candidate error',e)
+          if len(valid)<3:raise SystemExit(f'Only {len(valid)} valid Commons images found; at least 3 needed.')
+          Path('output/commons_sources.json').write_text(json.dumps(valid,indent=2,ensure_ascii=False))
+          Path('commons_assets/list.txt').write_text(','.join(c['local'] for c in valid))
+          print('Downloaded',len(valid),'images')
+          PY
+      - name: Generate video using original MoneyPrinterTurbo CLI with local Commons materials
+        env:
+          TOPIC: ${{ inputs.topic }}
+          LANGUAGE: ${{ inputs.language }}
+          ASPECT: ${{ inputs.aspect }}
+        run: |
+          if [ "$ASPECT" = "landscape" ]; then RATIO="16:9"; else RATIO="9:16"; fi
+          MATERIALS="$(cat commons_assets/list.txt)"
+          python cli.py --video-subject "$TOPIC" --video-language "$LANGUAGE" --video-source local --video-materials "$MATERIALS" --video-aspect "$RATIO" --image-motion zoom --subtitle-enabled --stop-at video
+          python - <<'PY'
+          from pathlib import Path
+          import shutil
+          files=list(Path('storage/tasks').rglob('*.mp4'))
+          if not files: raise SystemExit('No video output MP4 found')
+          files.sort(key=lambda p:p.stat().st_mtime,reverse=True)
+          shutil.copy2(files[0],Path('output/final.mp4'))
+          print('Output:',files[0])
+          PY
+      - name: Validate video
+        run: |
+          test -s output/final.mp4
+          ffprobe -v error -show_streams -show_format output/final.mp4 > output/probe.json
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MoneyPrinterTurbo-Commons-video
+          path: output/
+          retention-days: 7
