@@ -25,7 +25,7 @@ def main():
   if not a.subtitle:run("Subtitles",[sys.executable,ROOT/"scripts/android_subtitle_generator.py","--plan",aligned,"--out",srt])
   run("Asset resolution",[sys.executable,ROOT/"scripts/android_visual_asset_engine.py","--plan",aligned,"--manifest",manifest,"--assets-out",assets,"--metadata-out",meta])
   run("Motion rendering",[sys.executable,ROOT/"scripts/android_multiscene_render_v5.py","--plan",aligned,"--assets",assets,"--audio",audio,"--subtitle",srt,"--output",o,"--work-dir",w/"render","--width",a.width,"--height",a.height,"--fps",a.fps,"--motion",a.motion])
-  total=sum(float(x["duration_seconds"]) for x in json.loads(aligned.read_text(encoding="utf-8"))["scenes"]);run("QC",[sys.executable,ROOT/"scripts/android_video_qc.py",o,"--expected-duration",total,"--require-subtitles","--min-width",a.width,"--min-height",a.height,"--report",qc,"--asset-manifest",manifest])
+  total=sum(float(x["duration_seconds"]) for x in json.loads(aligned.read_text(encoding="utf-8"))["scenes"]);run("QC",[sys.executable,ROOT/"scripts/android_video_qc.py",o,"--expected-duration",total,"--require-subtitles","--min-width",a.width,"--min-height",a.height,"--report",qc])
   report={"status":"success","output":str(o),"audio":str(audio),"subtitle":str(srt),"asset_manifest":str(manifest),"qc":str(qc),"motion":a.motion};(w/"pipeline_report.json").write_text(json.dumps(report,indent=2));print(json.dumps(report,indent=2));return 0
  except Exception as e:print("ERROR:",e,file=sys.stderr);return 1
 if __name__=="__main__":raise SystemExit(main())
