@@ -3,19 +3,11 @@ on:
   workflow_dispatch:
     inputs:
       script:
-        description: "Narration script (one or more paragraphs)"
-        required: true
-        type: string
-      piper_model_url:
-        description: "Direct URL to Piper .onnx voice model"
-        required: true
-        type: string
-      piper_config_url:
-        description: "Direct URL to Piper model .json config"
+        description: "Narration script"
         required: true
         type: string
       output_name:
-        description: "Output filename (MP4)"
+        description: "Output filename"
         required: true
         default: "final.mp4"
         type: string
@@ -33,36 +25,29 @@ jobs:
           sudo apt-get install -y ffmpeg
           python -m pip install --upgrade pip
           python -m pip install piper-tts
-      - name: Validate inputs and download voice model
+      - name: Download Indonesian Piper voice automatically
+        run: |
+          mkdir -p production/voice production/work
+          MODEL_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main/id/id_ID/news_tts/medium/id_ID-news_tts-medium.onnx"
+          CONFIG_URL="${MODEL_URL}.json"
+          curl --retry 3 --retry-delay 2 -fL "$MODEL_URL" -o production/voice/model.onnx
+          curl --retry 3 --retry-delay 2 -fL "$CONFIG_URL" -o production/voice/model.onnx.json
+          test -s production/voice/model.onnx
+          test -s production/voice/model.onnx.json
+      - name: Validate and save script
         env:
-          MODEL_URL: ${{ inputs.piper_model_url }}
-          CONFIG_URL: ${{ inputs.piper_config_url }}
+          VIDEO_SCRIPT: ${{ inputs.script }}
           OUTPUT_NAME: ${{ inputs.output_name }}
         run: |
           python - <<'PY'
           import os,re
+          from pathlib import Path
           name=os.environ["OUTPUT_NAME"]
           if not re.fullmatch(r"[A-Za-z0-9._-]+\.mp4",name,re.I):
-              raise SystemExit("output_name must be a simple .mp4 filename")
-          for k in ("MODEL_URL","CONFIG_URL"):
-              if not os.environ[k].startswith("https://"):
-                  raise SystemExit(k+" must be HTTPS")
-          PY
-          mkdir -p production/voice production/work
-          curl -fL "$MODEL_URL" -o production/voice/model.onnx
-          curl -fL "$CONFIG_URL" -o production/voice/model.onnx.json
-          test -s production/voice/model.onnx
-          test -s production/voice/model.onnx.json
-      - name: Save script
-        env:
-          VIDEO_SCRIPT: ${{ inputs.script }}
-        run: |
-          python - <<'PY'
-          import os
-          from pathlib import Path
+              raise SystemExit("Output must be a simple .mp4 filename")
           s=os.environ["VIDEO_SCRIPT"].strip()
           if not s: raise SystemExit("Script cannot be empty")
-          Path("production/script.txt").write_text(s, encoding="utf-8")
+          Path("production/script.txt").write_text(s,encoding="utf-8")
           PY
       - name: Produce video
         env:
