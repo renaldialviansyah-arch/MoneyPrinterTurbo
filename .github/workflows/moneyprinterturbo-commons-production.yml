@@ -29,24 +29,26 @@ jobs:
           sudo apt-get update && sudo apt-get install -y ffmpeg
           python -m pip install --upgrade pip uv
           uv pip install --system --overrides requirements-security.txt -r requirements.txt
-      - name: Configure LLM (no stock API)
+      - name: Configure LLM (Moonshot API)
         env:
           MOONSHOT_KEY: ${{ secrets.MOONSHOT_API_KEY }}
         run: |
           if [ -z "$MOONSHOT_KEY" ]; then echo "Missing MOONSHOT_API_KEY repository secret"; exit 1; fi
+          cp config.example.toml config.toml
           python - <<'PY'
-          import os
+          import os,re
           from pathlib import Path
-          key=os.environ['MOONSHOT_KEY'].replace('"','\\\"')
-          Path('config.toml').write_text(f'''log_level = "INFO"
-          listen_host = "127.0.0.1"
-          listen_port = 8080
-          video_source = "local"
-          llm_provider = "moonshot"
-          moonshot_api_key = "{key}"
-          moonshot_base_url = ""
-          moonshot_model_name = ""
-          ''')
+          p=Path('config.toml')
+          text=p.read_text()
+          key=os.environ['MOONSHOT_KEY']
+          text=re.sub(r'(?m)^llm_provider\s*=.*$', 'llm_provider = "moonshot"', text)
+          text=re.sub(r'(?m)^moonshot_api_key\s*=.*$', 'moonshot_api_key = '+repr(key), text)
+          p.write_text(text)
+          check=p.read_text()
+          match=re.search(r'(?m)^moonshot_api_key\s*=\s*(.+)$',check)
+          if not match or match.group(1).strip() in ('""',"''"):
+            raise SystemExit('Moonshot key was not written into config')
+          print('Moonshot config verified: key present (value redacted)')
           PY
       - name: Download Commons images with query fallback
         env:
