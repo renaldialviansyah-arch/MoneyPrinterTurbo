@@ -1,0 +1,105 @@
+name: Android Production Integration Test Level 4
+on:
+  workflow_dispatch:
+  push:
+    branches: [android-mobile-work]
+    paths:
+      - 'scripts/android_production_pipeline_v8.py'
+      - 'scripts/android_scene_planner_v2.py'
+      - 'scripts/android_plan_audio_sync.py'
+      - 'scripts/android_subtitle_generator.py'
+      - 'scripts/android_visual_asset_engine.py'
+      - 'scripts/android_multiscene_render_v5.py'
+      - 'scripts/android_video_qc.py'
+      - '.github/workflows/android-production-integration-level4.yml'
+permissions:
+  contents: read
+  actions: write
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout production branch
+        uses: actions/checkout@v4
+        with:
+          ref: android-mobile-work
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg espeak-ng
+          ffmpeg -version
+          ffprobe -version
+          espeak-ng --version
+      - name: Prepare test fixtures
+        run: |
+          set -euo pipefail
+          mkdir -p production/integration/work production/integration/assets
+          python - <<'PY'
+          from PIL import Image, ImageDraw
+          from pathlib import Path
+          import json
+          root=Path('production/integration/assets')
+          entries=[]
+          for i in range(1,4):
+              im=Image.new('RGB',(720,1280),(20*i,30+10*i,55+15*i))
+              d=ImageDraw.Draw(im)
+              d.rectangle((70,180,650,980),outline=(220,230,240),width=8)
+              d.ellipse((150*i-50,350,150*i+220,620),fill=(65,125,190))
+              d.text((50,1080),f'INTEGRATION FIXTURE SCENE {i}',fill='white')
+              p=root/f'scene{i:03}.jpg'
+              im.save(p,quality=90)
+              entries.append({'scene':i,'path':str(p.resolve()),'source':'https://example.invalid/test-fixture-not-a-real-source','license':'test fixture only','notes':'Synthetic integration fixture. Not a real licensed image.'})
+          Path('production/integration/assets_manifest.json').write_text(json.dumps({'assets':entries},indent=2),encoding='utf-8')
+          Path('production/integration/script.txt').write_text(
+            'This integration test verifies the production pipeline end to end. '
+            'Synthetic scene fixtures are used only to test planning, audio alignment, subtitle generation, rendering, and quality control. '
+            'This test does not validate external image acquisition or real asset licensing.',
+            encoding='utf-8')
+          PY
+      - name: Validate dependencies and fixture manifest
+        run: |
+          set -euo pipefail
+          python -c "from PIL import Image; import numpy; print('Pillow and NumPy OK')"
+          python - <<'PY'
+          import json, pathlib
+          m=json.loads(pathlib.Path('production/integration/assets_manifest.json').read_text())
+          assert len(m['assets'])==3
+          assert all(pathlib.Path(x['path']).is_file() for x in m['assets'])
+          print('Fixture manifest verified')
+          PY
+      - name: Run pipeline v8 end to end (fixture assets)
+        run: |
+          set -euo pipefail
+          python scripts/android_production_pipeline_v8.py \
+            --script production/integration/script.txt \
+            --manifest production/integration/assets_manifest.json \
+            --tts-engine espeak \
+            --output production/integration/final.mp4 \
+            --work-dir production/integration/work \
+            --width 540 --height 960 --fps 24 --motion subtle
+      - name: Independent final file verification
+        run: |
+          set -euo pipefail
+          test -s production/integration/final.mp4
+          ffprobe -v error -show_entries stream=codec_type,width,height -of json production/integration/final.mp4
+          python - <<'PY'
+          import json,pathlib
+          q=json.loads(pathlib.Path('production/integration/work/qc.json').read_text())
+          assert q['status']=='PASS', q
+          assert q['video_streams']>=1
+          assert q['audio_streams']>=1
+          assert q['subtitle_streams']>=1
+          assert q['resolution']=='540x960',q
+          print('INTEGRATION TEST PASS:',json.dumps(q,indent=2))
+          PY
+      - name: Upload complete integration bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-integration-level4
+          path: production/integration/
+          retention-days: 7
