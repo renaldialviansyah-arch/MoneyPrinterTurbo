@@ -1,0 +1,78 @@
+name: Android Production Test Engine Level 3
+on:
+  workflow_dispatch:
+  push:
+    branches: [android-mobile-work]
+    paths:
+      - 'scripts/android_production_pipeline_v8.py'
+      - 'scripts/android_commons_auto_assets.py'
+      - 'scripts/android_video_qc.py'
+      - '.github/workflows/android-production-test-engine-level3.yml'
+permissions:
+  contents: read
+  actions: write
+jobs:
+  synthetic-production-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: android-mobile-work
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg espeak-ng
+          python -m pip install --upgrade pip
+          python -m pip install Pillow numpy
+          python -c 'from PIL import Image,ImageDraw,ImageFont; print("Pillow OK")'
+      - name: Build synthetic fixtures
+        run: |
+          mkdir -p production/test/work production/test/visuals
+          python - <<'PY'
+          from PIL import Image,ImageDraw
+          from pathlib import Path
+          import json
+          p=Path("production/test/visuals")
+          for i in range(1,3):
+            im=Image.new("RGB",(720,1280),(15*i,35,70));d=ImageDraw.Draw(im)
+            d.ellipse((120*i,250,400+120*i,650),fill=(50,100,160))
+            d.text((60,1000),f"SYNTHETIC TEST SCENE {i}",fill="white")
+            im.save(p/f"scene{i:03}_fallback.jpg")
+          Path("production/test/script.txt").write_text("This is an automated synthetic production test. The system checks scene planning, narration audio, subtitle generation, visual rendering, video encoding and quality control.",encoding="utf-8")
+          plan={"scenes":[{"scene":1,"path":"visuals/scene001_fallback.jpg"},{"scene":2,"path":"visuals/scene002_fallback.jpg"}]}
+          manifest={"assets":[{"scene":1,"path":"visuals/scene001_fallback.jpg","source":"synthetic fixture","license":"test-only"},{"scene":2,"path":"visuals/scene002_fallback.jpg","source":"synthetic fixture","license":"test-only"}]}
+          Path("production/test/work/plan.json").write_text(json.dumps(plan))
+          Path("production/test/work/assets_local.json").write_text(json.dumps(manifest))
+          PY
+      - name: Render synthetic video with subtitles
+        run: |
+          espeak-ng -w production/test/work/narration.wav "Automated production pipeline test. Visual render, audio and subtitle checks."
+          cat > production/test/work/subtitles.srt <<'SRT'
+          1
+          00:00:00,000 --> 00:00:03,000
+          Automated production pipeline test.
+
+          2
+          00:00:03,000 --> 00:00:06,000
+          Video, audio and subtitles are being verified.
+          SRT
+          ffmpeg -y -loop 1 -i production/test/visuals/scene001_fallback.jpg -t 3 -vf 'scale=540:960,setsar=1' -an -c:v libx264 -pix_fmt yuv420p production/test/work/scene1.mp4
+          ffmpeg -y -loop 1 -i production/test/visuals/scene002_fallback.jpg -t 3 -vf 'scale=540:960,setsar=1' -an -c:v libx264 -pix_fmt yuv420p production/test/work/scene2.mp4
+          printf "file '%s'\nfile '%s'\n" "$PWD/production/test/work/scene1.mp4" "$PWD/production/test/work/scene2.mp4" > production/test/work/concat.txt
+          ffmpeg -y -f concat -safe 0 -i production/test/work/concat.txt -c copy production/test/work/video_only.mp4
+          ffmpeg -y -i production/test/work/video_only.mp4 -i production/test/work/narration.wav -i production/test/work/subtitles.srt -map 0:v -map 1:a -map 2:s -c:v copy -c:a aac -c:s mov_text -shortest production/test/final.mp4
+      - name: QC video streams and dimensions
+        run: |
+          python scripts/android_video_qc.py production/test/final.mp4 --require-subtitles --min-width 540 --min-height 960 --report production/test/qc.json
+          cat production/test/qc.json
+      - name: Upload test result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-test-engine-level3
+          path: production/test/
+          retention-days: 7
