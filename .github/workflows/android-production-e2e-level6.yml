@@ -5,6 +5,9 @@ on:
     branches: [android-mobile-work]
     paths:
       - '.github/workflows/android-production-e2e-level6.yml'
+      - 'scripts/android_commons_auto_assets.py'
+      - 'scripts/android_production_pipeline_v8.py'
+      - 'scripts/android_video_qc.py'
 permissions:
   contents: read
 jobs:
