@@ -1,0 +1,56 @@
+name: Android Production Readiness Gate Level 10
+on:
+  workflow_dispatch:
+  push:
+    branches: [android-mobile-work]
+    paths:
+      - '.github/workflows/android-production-readiness-level10.yml'
+      - 'scripts/android_production_readiness_level10_test.py'
+      - 'scripts/android_asset_provenance_audit.py'
+      - 'scripts/android_video_qc.py'
+      - 'scripts/android_subtitle_generator.py'
+permissions:
+  contents: read
+jobs:
+  readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout production branch
+        uses: actions/checkout@v4
+        with:
+          ref: android-mobile-work
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install deterministic test dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          python -m pip install --upgrade pip
+          python -m pip install Pillow
+      - name: Run Level 10 readiness tests
+        run: |
+          set -euo pipefail
+          mkdir -p production/level10
+          python scripts/android_production_readiness_level10_test.py 2>&1 | tee production/level10/test-log.txt
+      - name: Write gate report
+        if: always()
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          log=Path('production/level10/test-log.txt')
+          text=log.read_text(errors='replace') if log.exists() else 'Test log unavailable.'
+          status='PASS' if 'OK' in text and 'FAILED' not in text else 'CHECK'
+          Path('production/level10/readiness-report.json').write_text(json.dumps({'level':10,'status':status,'scope':'isolated local readiness tests; no live external download or neural voice model tested','log_available':log.exists()},indent=2))
+          PY
+      - name: Upload Level 10 report bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-readiness-level10
+          path: production/level10/
+          retention-days: 7
