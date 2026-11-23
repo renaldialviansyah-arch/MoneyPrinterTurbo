@@ -48,29 +48,30 @@ jobs:
           moonshot_model_name = ""
           ''')
           PY
-      - name: Download Commons images
+      - name: Download Commons images with reusable license filtering
         env:
           TOPIC: ${{ inputs.topic }}
         run: |
           mkdir -p commons_assets output
           python - <<'PY'
-          import urllib.request,urllib.parse,json,re,subprocess
+          import urllib.request,urllib.parse,json,re,subprocess,os
           from pathlib import Path
-          q=os.environ.get('TOPIC','') if False else None
-          import os
           topic=os.environ['TOPIC']
           queries=[topic, ' '.join(topic.split()[:4]), topic+' historical']
           candidates=[]
           for query in queries:
-            params={'action':'query','generator':'search','gsrsearch':query,'gsrnamespace':6,'gsrlimit':25,'prop':'imageinfo','iiprop':'url|extmetadata','format':'json'}
-            req=urllib.request.Request('https://commons.wikimedia.org/w/api.php?'+urllib.parse.urlencode(params),headers={'User-Agent':'MoneyPrinterTurboCommonsWorkflow/1.0'})
+            params={'action':'query','generator':'search','gsrsearch':query,'gsrnamespace':6,'gsrlimit':30,'prop':'imageinfo','iiprop':'url|extmetadata','format':'json'}
+            req=urllib.request.Request('https://commons.wikimedia.org/w/api.php?'+urllib.parse.urlencode(params),headers={'User-Agent':'MoneyPrinterTurboCommonsWorkflow/1.1 (video workflow)'})
             try:
               data=json.loads(urllib.request.urlopen(req,timeout=25).read())
               for page in data.get('query',{}).get('pages',{}).values():
                 info=(page.get('imageinfo') or [{}])[0]; meta=info.get('extmetadata',{})
                 lic=meta.get('LicenseShortName',{}).get('value','')
                 url=info.get('url','')
-                if not re.search(r'(public domain|CC0|CC BY|CC BY-SA|Creative Commons)',lic,re.I):continue
+                # Restrict to commercial-compatible licenses and public domain;
+                # exclude NC and ND terms explicitly.
+                if re.search(r'\b(NC|Non.?Commercial|ND|No.?Derivatives)\b',lic,re.I):continue
+                if not re.search(r'(public domain|CC0|CC BY(?:-|$)|CC BY-SA|Creative Commons Attribution)',lic,re.I):continue
                 if not re.search(r'\.(jpg|jpeg|png|webp)(?:\?|$)',url,re.I):continue
                 candidates.append({'url':url,'title':page.get('title',''),'license':lic,'page':info.get('descriptionurl','')})
             except Exception as e: print('Query issue',query,e)
@@ -79,7 +80,7 @@ jobs:
             if c['url'] in seen:continue
             seen.add(c['url'])
             try:
-              req=urllib.request.Request(c['url'],headers={'User-Agent':'MoneyPrinterTurboCommonsWorkflow/1.0'})
+              req=urllib.request.Request(c['url'],headers={'User-Agent':'MoneyPrinterTurboCommonsWorkflow/1.1'})
               raw=urllib.request.urlopen(req,timeout=30).read()
               if len(raw)<1500:continue
               ext='.png' if '.png' in c['url'].lower() else '.webp' if '.webp' in c['url'].lower() else '.jpg'
@@ -89,12 +90,12 @@ jobs:
               c['local']=str(p);valid.append(c)
               if len(valid)>=8:break
             except Exception as e: print('Candidate error',e)
-          if len(valid)<3:raise SystemExit(f'Only {len(valid)} valid Commons images found; at least 3 needed.')
+          if len(valid)<3:raise SystemExit(f'Only {len(valid)} usable Commons images found; at least 3 needed.')
           Path('output/commons_sources.json').write_text(json.dumps(valid,indent=2,ensure_ascii=False))
           Path('commons_assets/list.txt').write_text(','.join(c['local'] for c in valid))
           print('Downloaded',len(valid),'images')
           PY
-      - name: Generate video using original MoneyPrinterTurbo CLI with local Commons materials
+      - name: Generate using upstream MoneyPrinterTurbo CLI
         env:
           TOPIC: ${{ inputs.topic }}
           LANGUAGE: ${{ inputs.language }}
