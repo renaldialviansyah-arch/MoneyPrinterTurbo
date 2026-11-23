@@ -1,0 +1,54 @@
+name: Android Production Failure-Mode Gate Level 11
+on:
+  workflow_dispatch:
+  push:
+    branches: [android-mobile-work]
+    paths:
+      - '.github/workflows/android-production-failure-mode-level11.yml'
+      - 'scripts/android_production_failure_mode_level11_test.py'
+      - 'scripts/android_asset_provenance_audit.py'
+      - 'scripts/android_video_qc.py'
+permissions:
+  contents: read
+jobs:
+  failure-mode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout production branch
+        uses: actions/checkout@v4
+        with:
+          ref: android-mobile-work
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install deterministic dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          python -m pip install Pillow
+      - name: Run Level 11 failure-mode tests
+        run: |
+          set -euo pipefail
+          mkdir -p production/level11
+          python scripts/android_production_failure_mode_level11_test.py 2>&1 | tee production/level11/test-log.txt
+      - name: Create report
+        if: always()
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          p=Path('production/level11/test-log.txt')
+          t=p.read_text(errors='replace') if p.exists() else ''
+          status='PASS' if 'OK' in t and 'FAILED' not in t and 'ERROR' not in t else 'CHECK'
+          Path('production/level11/report.json').write_text(json.dumps({'level':11,'status':status,'scope':'local failure-mode tests; no external assets, network, or neural voice models','tests_log_present':p.exists()},indent=2),encoding='utf-8')
+          PY
+      - name: Upload Level 11 test bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-failure-mode-level11
+          path: production/level11/
+          retention-days: 7
