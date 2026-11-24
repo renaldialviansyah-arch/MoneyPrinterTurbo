@@ -279,7 +279,6 @@ jobs:
           Path('commons_assets/list.txt').write_text(','.join(c['local'] for c in valid))
           print('Total validated image assets:',len(valid))
           PY
-          PY
       - name: Render scene-locked clips and assemble timeline
         env:
           TOPIC: ${{ inputs.topic }}
