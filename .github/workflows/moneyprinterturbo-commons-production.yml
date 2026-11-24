@@ -214,7 +214,7 @@ jobs:
             if not assets: raise SystemExit(f'No scene-specific images for scene {i}')
             script=scene['voiceover'].strip()
             materials=','.join(str(p.resolve()) for p in assets)
-            cmd=['python','cli.py','--video-subject',os.environ['TOPIC'],'--video-script',script,'--video-language',os.environ['LANGUAGE'],'--voice-name','en-US-AriaNeural','--voice-rate','1.04','--video-source','local','--video-materials',materials,'--video-aspect','16:9' if os.environ['ASPECT']=='landscape' else '9:16','--image-motion','zoom','--subtitle-enabled','--stop-at','video']
+            cmd=['python','cli.py','--video-subject',os.environ['TOPIC'],'--video-script',script,'--video-language',os.environ['LANGUAGE'],'--voice-name','en-US-AriaNeural','--voice-rate','1.04','--video-source','local','--video-materials',materials,'--video-aspect','16:9' if os.environ['ASPECT']=='landscape' else '9:16','--image-motion','zoom','--bgm-type','none','--subtitle-enabled','--stop-at','video']
             print(f'RENDERING LOCKED SCENE {i}/6 with {len(assets)} assigned images')
             subprocess.run(cmd,check=True)
             files=list(task_root.rglob('*.mp4'))
