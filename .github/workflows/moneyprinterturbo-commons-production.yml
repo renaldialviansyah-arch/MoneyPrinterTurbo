@@ -105,10 +105,12 @@ jobs:
             raise SystemExit("MoneyPrinterTurbo LLM service preflight failed: unexpected response")
           print("MoneyPrinterTurbo service-level LLM preflight passed.")
           PY
-      - name: Generate narrative and scene-specific Commons assets
+      - name: Generate narrative and scene-specific Pixabay assets
         env:
           TOPIC: ${{ inputs.topic }}
           LANGUAGE: ${{ inputs.language }}
+          PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+          ASPECT: ${{ inputs.aspect }}
         run: |
           set -euo pipefail
           mkdir -p commons_assets output
@@ -201,95 +203,102 @@ jobs:
           Path('output/scenes.json').write_text(json.dumps(scenes,indent=2,ensure_ascii=False),encoding='utf-8')
           print('Narrative ready:',len(scenes),'scenes')
 
+          api_key=os.environ.get('PIXABAY_API_KEY','').strip()
+          if not api_key:
+            raise SystemExit('PIXABAY_API_KEY secret is missing. Add it in GitHub repository Settings > Secrets and variables > Actions.')
           seen_urls=set()
           valid=[]
-          mime_ext={ 'image/jpeg':'.jpg', 'image/png':'.png', 'image/webp':'.webp', 'image/tiff':'.tif', 'image/gif':'.gif' }
-          def search_titles(query):
-            params={'action':'query','list':'search','srsearch':query,'srnamespace':6,'srlimit':12,'format':'json'}
-            data=json.loads(fetch('https://commons.wikimedia.org/w/api.php?'+urllib.parse.urlencode(params)))
-            return [x['title'] for x in data.get('query',{}).get('search',[])]
-          def get_candidates(titles,query,scene_no):
-            found=[]
-            for offset in range(0,len(titles),8):
-              batch=titles[offset:offset+8]
-              if not batch: continue
-              q={'action':'query','titles':'|'.join(batch),'prop':'imageinfo','iiprop':'url|mime|extmetadata','iiurlwidth':1000,'format':'json'}
-              details=json.loads(fetch('https://commons.wikimedia.org/w/api.php?'+urllib.parse.urlencode(q)))
-              for page in details.get('query',{}).get('pages',{}).values():
-                info=(page.get('imageinfo') or [{}])[0]
-                mime=(info.get('mime') or '').lower()
-                if not mime.startswith('image/'): continue
-                meta=info.get('extmetadata',{})
-                lic=html.unescape(meta.get('LicenseShortName',{}).get('value',''))
-                if not lic or re.search(r'non.?commercial|no.?derivatives|\bNC\b|\bND\b',lic,re.I): continue
-                url=info.get('thumburl') or info.get('url','')
-                if not url or url in seen_urls: continue
-                seen_urls.add(url)
-                found.append({'url':url,'mime':mime,'title':page.get('title',''),'license':lic,'page':info.get('descriptionurl',''),'query':query,'scene':scene_no})
-              time.sleep(2)
-            return found
-
-          for idx,scene in enumerate(scenes,1):
-            base=scene['visual_query'].strip()
-            topic_clean=topic.strip()
-            queries=[
-              base,
-              base+' photo',
-              topic_clean+' '+(['location aerial photograph','historical map photograph','archaeological artifacts museum','historical daily life people','ruins excavation site','present day site photograph'][idx-1])
-            ]
-            broad_queries={
-              1:['historic city aerial photograph','ancient city landscape photograph','historic settlement landscape'],
-              2:['historical map ancient city','old map historic city','ancient city map'],
-              3:['archaeological artifacts museum photograph','ancient pottery tools artifacts','archaeological objects museum'],
-              4:['historical people daily life illustration','ancient people daily life historical photograph','historic village people reconstruction'],
-              5:['ancient city ruins photograph','archaeological excavation ruins','abandoned historic city ruins','ancient settlement remains landscape'],
-              6:['ancient city ruins photograph','historic ruins landscape photograph','archaeological site remains photograph','abandoned ancient settlement ruins','ancient buildings ruins aerial']
-            }
-            queries.extend(broad_queries.get(idx,[]))
-            candidates=[]
-            for query in queries:
+          def pixabay_search(query, retries=5):
+            params={'key':api_key,'q':query,'image_type':'photo','orientation':'vertical' if os.environ.get('ASPECT')!='landscape' else 'horizontal','safesearch':'true','per_page':30,'order':'relevance'}
+            url='https://pixabay.com/api/?'+urllib.parse.urlencode(params)
+            for attempt in range(retries):
               try:
-                print(f'SCENE {idx} SEARCH:',query)
-                titles=search_titles(query)
-                print(f'SCENE {idx} search returned {len(titles)} file records')
-                candidates.extend(get_candidates(titles,query,idx))
-                if len(candidates)>=2: break
+                # Never print the request URL because it contains the API key.
+                with urllib.request.urlopen(urllib.request.Request(url,headers=headers),timeout=45) as response:
+                  payload=json.loads(response.read().decode('utf-8'))
+                if 'hits' not in payload:
+                  raise RuntimeError('Pixabay response did not contain hits')
+                return payload['hits']
+              except urllib.error.HTTPError as e:
+                if e.code in (429,500,502,503,504):
+                  retry=e.headers.get('Retry-After','')
+                  try: delay=min(90,max(5,int(retry))) if retry else min(60,5*(2**attempt))
+                  except ValueError: delay=min(60,5*(2**attempt))
+                  print(f'Pixabay HTTP {e.code}; retry {attempt+1}/{retries} after {delay}s')
+                  if attempt==retries-1: raise
+                  time.sleep(delay)
+                else:
+                  raise RuntimeError(f'Pixabay API returned HTTP {e.code}; check PIXABAY_API_KEY and API access')
               except Exception as e:
-                print(f'Scene {idx} query failed: {type(e).__name__}: {e}')
-              time.sleep(4)
-            got=0
-            for c in candidates:
+                print(f'Pixabay request retry {attempt+1}/{retries}: {type(e).__name__}: {e}')
+                if attempt==retries-1: raise
+                time.sleep(min(45,4*(2**attempt)))
+            return []
+          def clean_query(value):
+            value=re.sub(r'[^A-Za-z0-9 ,\-]', ' ', value)
+            value=re.sub(r'\s+',' ',value).strip()
+            words=value.split()
+            return ' '.join(words[:12])
+          for idx,scene in enumerate(scenes,1):
+            base=clean_query(scene['visual_query'])
+            topic_clean=clean_query(topic)
+            scene_terms=[
+              ['ancient city aerial ruins landscape','historic city skyline architecture'],
+              ['ancient city historical map','old map city landscape'],
+              ['archaeological artifacts pottery museum','ancient tools ruins artifacts'],
+              ['ancient people daily life historical reenactment','historic village people traditional life'],
+              ['ancient ruins archaeological excavation','abandoned city ruins landscape'],
+              ['ancient ruins aerial photograph','historic archaeological site landscape']
+            ][idx-1]
+            queries=[base,clean_query(topic_clean+' '+scene_terms[0]),clean_query(scene_terms[1])]
+            hits=[]
+            for query in queries:
+              if not query: continue
               try:
-                raw=fetch(c['url'],tries=4)
+                print(f'PIXABAY SCENE {idx} SEARCH:',query)
+                results=pixabay_search(query)
+                print(f'PIXABAY SCENE {idx} RESULTS:',len(results))
+                for hit in results:
+                  image_url=hit.get('largeImageURL') or hit.get('webformatURL')
+                  if not image_url or image_url in seen_urls: continue
+                  if hit.get('type') not in ('photo','illustration','vector'): continue
+                  seen_urls.add(image_url)
+                  hits.append({'url':image_url,'title':hit.get('tags',''),'page':hit.get('pageURL',''),'user':hit.get('user',''),'scene':idx,'provider':'Pixabay','query':query,'license':'Pixabay Content License'})
+                if len(hits)>=2: break
+              except Exception as e:
+                print(f'Pixabay scene {idx} query failed: {type(e).__name__}: {str(e)[:200]}')
+              time.sleep(2)
+            got=0
+            for hit in hits:
+              try:
+                raw=fetch(hit['url'],tries=4)
                 if len(raw)<1200: continue
-                suffix=mime_ext.get(c['mime'],'.img')
-                with tempfile.NamedTemporaryFile(suffix=suffix,delete=False) as tmp:
+                with tempfile.NamedTemporaryFile(suffix='.img',delete=False) as tmp:
                   tmp.write(raw); source=tmp.name
                 dest=Path(f'commons_assets/scene{idx:02}_image{got+1}.jpg')
                 conv=subprocess.run(['ffmpeg','-y','-v','error','-i',source,'-frames:v','1','-q:v','2',str(dest)],capture_output=True,text=True)
                 Path(source).unlink(missing_ok=True)
                 if conv.returncode or not dest.exists() or dest.stat().st_size<1200:
                   dest.unlink(missing_ok=True)
-                  print('Skipped non-decodable image:',c['title'])
+                  print('Skipped invalid Pixabay image:',hit.get('title','')[:100])
                   continue
-                c['local']=str(dest)
-                valid.append(c);got+=1
-                print('Validated image:',c['title'],'|',c['mime'],'|',c['license'])
+                hit['local']=str(dest)
+                valid.append(hit);got+=1
+                print('Validated Pixabay image:',hit.get('title','')[:140],'| contributor:',hit.get('user','unknown'))
                 if got>=2: break
               except Exception as e:
-                print('Asset skipped:',type(e).__name__,str(e)[:180])
+                print('Pixabay asset skipped:',type(e).__name__,str(e)[:180])
               time.sleep(2)
-            print(f'SCENE {idx} FINAL IMAGE COUNT:',got)
-            time.sleep(5)
-
+            print(f'PIXABAY SCENE {idx} FINAL IMAGE COUNT:',got)
+            time.sleep(3)
           counts={i:sum(1 for item in valid if item['scene']==i) for i in range(1,7)}
           missing=[i for i,count in counts.items() if count<1]
-          print('Per-scene image counts:',counts)
+          print('Per-scene Pixabay image counts:',counts)
           if missing:
-            raise SystemExit(f'Missing valid image assets for scenes: {missing}. Search retries and alternate queries were exhausted.')
-          Path('output/commons_sources.json').write_text(json.dumps(valid,indent=2,ensure_ascii=False))
+            raise SystemExit(f'Pixabay could not provide valid images for scenes: {missing}. Adjust visual queries or verify Pixabay API access.')
+          Path('output/pixabay_sources.json').write_text(json.dumps(valid,indent=2,ensure_ascii=False))
           Path('commons_assets/list.txt').write_text(','.join(c['local'] for c in valid))
-          print('Total validated image assets:',len(valid))
+          print('Total validated Pixabay image assets:',len(valid))
           PY
       - name: Render scene-locked clips and assemble timeline
         env:
