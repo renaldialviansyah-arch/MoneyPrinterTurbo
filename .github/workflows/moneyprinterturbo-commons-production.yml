@@ -113,90 +113,172 @@ jobs:
           set -euo pipefail
           mkdir -p commons_assets output
           python - <<'PY'
-          import urllib.request,urllib.parse,json,re,subprocess,os,time
+          import urllib.request, urllib.parse, urllib.error, json, re, subprocess, os, time, html, tempfile
           from pathlib import Path
           from openai import OpenAI
-          topic=os.environ['TOPIC']; language=os.environ['LANGUAGE']
-          headers={'User-Agent':'MoneyPrinterTurboCommonsWorkflow/7.1'}
-          def fetch(url,tries=4):
+
+          topic=os.environ['TOPIC']
+          language=os.environ['LANGUAGE']
+          headers={'User-Agent':'MoneyPrinterTurboCommonsWorkflow/8.0 (documentary video asset retrieval)'}
+          def fetch(url,tries=5):
             for attempt in range(tries):
-              try:return urllib.request.urlopen(urllib.request.Request(url,headers=headers),timeout=30).read()
+              try:
+                with urllib.request.urlopen(urllib.request.Request(url,headers=headers),timeout=45) as response:
+                  return response.read()
+              except urllib.error.HTTPError as e:
+                if e.code==429 or 500<=e.code<600:
+                  retry=e.headers.get('Retry-After','')
+                  try: delay=min(90,max(5,int(retry))) if retry else min(60,5*(2**attempt))
+                  except ValueError: delay=min(60,5*(2**attempt))
+                  print(f'HTTP {e.code}; retry {attempt+1}/{tries} after {delay}s')
+                  if attempt==tries-1: raise
+                  time.sleep(delay)
+                else:
+                  raise
               except Exception as e:
-                print('retry',attempt+1,e)
-                if attempt==tries-1:raise
-                time.sleep(4*(attempt+1))
-          # Validated fallback narration, used if local inference is unavailable or malformed.
+                print(f'Network retry {attempt+1}/{tries}: {type(e).__name__}: {e}')
+                if attempt==tries-1: raise
+                time.sleep(min(45,4*(2**attempt)))
+            raise RuntimeError('HTTP retries exhausted')
+
           fallback=[
-            {'voiceover':f"Imagine looking at {topic} from a different angle. The familiar story may leave out some important details.",'visual_query':topic+' location landscape'},
-            {'voiceover':"First, look at the place where this story unfolded. Its geography helps explain what happened next.",'visual_query':topic+' historical location map'},
-            {'voiceover':"The people who lived here left traces in objects, buildings, and the landscape itself.",'visual_query':topic+' archaeological artifacts architecture'},
-            {'voiceover':"Those traces help us reconstruct daily life, although some parts of the story remain uncertain.",'visual_query':topic+' historical people daily life'},
-            {'voiceover':"Later changes reshaped the place. Evidence of those changes can still be found in what survived.",'visual_query':topic+' ruins excavation site'},
-            {'voiceover':"Today, these surviving traces are a reminder to distinguish what the evidence shows from what later stories claim.",'visual_query':topic+' modern site remains'}
+            {'voiceover':f"Imagine looking at {topic} from a different angle. The familiar story may leave out some important details.",'visual_query':topic+' location landscape photograph'},
+            {'voiceover':"First, look at the place where this story unfolded. Its geography helps explain what happened next.",'visual_query':topic+' historical location map photograph'},
+            {'voiceover':"The people who lived here left traces in objects, buildings, and the landscape itself.",'visual_query':topic+' archaeological artifacts ancient architecture photograph'},
+            {'voiceover':"Those traces help us reconstruct daily life, although some parts of the story remain uncertain.",'visual_query':topic+' historical people daily life reconstruction photograph'},
+            {'voiceover':"Later changes reshaped the place. Evidence of those changes can still be found in what survived.",'visual_query':topic+' ruins excavation archaeological site photograph'},
+            {'voiceover':"Today, these surviving traces are a reminder to distinguish what the evidence shows from what later stories claim.",'visual_query':topic+' modern archaeological site remains photograph'}
           ]
+
+          def extract_json(raw):
+            raw=(raw or '').strip()
+            raw=re.sub(r'^\x60{3}(?:json)?\s*','',raw,flags=re.I)
+            raw=re.sub(r'\s*\x60{3}$','',raw)
+            first=raw.find('{')
+            if first<0: raise ValueError('No JSON object found in model response')
+            depth=0; quoted=False; escaped=False
+            for pos,ch in enumerate(raw[first:],first):
+              if quoted:
+                if escaped: escaped=False
+                elif ch=='\\': escaped=True
+                elif ch=='"': quoted=False
+              else:
+                if ch=='"': quoted=True
+                elif ch=='{': depth+=1
+                elif ch=='}':
+                  depth-=1
+                  if depth==0: return json.loads(raw[first:pos+1])
+            raise ValueError('JSON object is incomplete')
+
           scenes=fallback
           try:
             client=OpenAI(base_url='http://127.0.0.1:11434/v1',api_key='ollama',timeout=600,max_retries=0)
-            prompt=f"""Create a compact six-scene documentary short about: {topic}
-          Language: {language}
-          Return ONLY valid JSON with key scenes and exactly 6 objects, each containing voiceover and visual_query.
-          Keep voiceover natural spoken language, concrete and concise, 1-2 sentences per scene, target 100-140 words total.
-          Avoid generic filler, repeated rhetorical questions, invented facts, and unsupported dates/quotes/statistics.
-          Visual queries: precise English image search phrases for each scene's actual subject; use locations, people, objects, architecture, maps, or evidence; avoid generic books/manuscripts.
-          Sequence: hook, context, people/evidence, development, consequence, reveal."""
-            response=client.chat.completions.create(model='qwen3:4b',messages=[{'role':'user','content':prompt}],temperature=0.25,max_tokens=1000)
+            prompt=f"""Return one valid JSON object only. No markdown fences or explanation.
+          Required schema: {{"scenes":[{{"voiceover":"...","visual_query":"..."}}]}}
+          Create exactly 6 scenes for this documentary topic: {topic}
+          Script language: {language}
+          Each voiceover should be natural spoken narration, concrete, 1-2 sentences. Total target 100-140 words.
+          Avoid generic filler, repeated rhetorical questions, invented facts, and unsupported dates, quotes, or statistics.
+          Each visual_query must be a specific English search phrase for a photograph or image of the actual subject in that scene.
+          Sequence: hook, geographic context, people and evidence, daily life/development, ruins or consequence, surviving evidence/reveal.
+          Do not return any keys other than scenes, voiceover, and visual_query."""
+            response=client.chat.completions.create(model='qwen3:4b',messages=[{'role':'user','content':prompt}],temperature=0.1,max_tokens=1800)
             raw=response.choices[0].message.content or ''
-            raw=re.sub(r'(?s)^.*?\{','{',raw,1);raw=re.sub(r'\}.*?$','}',raw,1)
-            parsed=json.loads(raw);candidate=parsed.get('scenes',[])
-            if len(candidate)==6 and all(isinstance(x,dict) and x.get('voiceover') and x.get('visual_query') for x in candidate):
-              scenes=candidate;print('Ollama generated validated scene JSON.')
-            else:print('Malformed response; using fallback.')
+            parsed=extract_json(raw)
+            candidate=parsed.get('scenes',[]) if isinstance(parsed,dict) else []
+            if len(candidate)==6 and all(isinstance(x,dict) and isinstance(x.get('voiceover'),str) and x['voiceover'].strip() and isinstance(x.get('visual_query'),str) and x['visual_query'].strip() for x in candidate):
+              scenes=[{'voiceover':x['voiceover'].strip(),'visual_query':x['visual_query'].strip()} for x in candidate]
+              print('Ollama generated six validated scenes.')
+            else:
+              print('Model JSON schema invalid; using validated fallback. Scene count:',len(candidate))
           except Exception as e:
-            print('Inference failed; using fallback:',type(e).__name__,str(e)[:250])
-          script='\n\n'.join(x['voiceover'].strip() for x in scenes)
+            print('Inference failed; using fallback:',type(e).__name__,str(e)[:300])
+          script='\n\n'.join(x['voiceover'] for x in scenes)
           Path('output/narrative_script.txt').write_text(script,encoding='utf-8')
           Path('output/scenes.json').write_text(json.dumps(scenes,indent=2,ensure_ascii=False),encoding='utf-8')
           print('Narrative ready:',len(scenes),'scenes')
-          seen_titles=set();seen_urls=set();valid=[]
+
+          seen_urls=set()
+          valid=[]
+          mime_ext={ 'image/jpeg':'.jpg', 'image/png':'.png', 'image/webp':'.webp', 'image/tiff':'.tif', 'image/gif':'.gif' }
+          def search_titles(query):
+            params={'action':'query','list':'search','srsearch':query,'srnamespace':6,'srlimit':12,'format':'json'}
+            data=json.loads(fetch('https://commons.wikimedia.org/w/api.php?'+urllib.parse.urlencode(params)))
+            return [x['title'] for x in data.get('query',{}).get('search',[])]
+          def get_candidates(titles,query,scene_no):
+            found=[]
+            for offset in range(0,len(titles),8):
+              batch=titles[offset:offset+8]
+              if not batch: continue
+              q={'action':'query','titles':'|'.join(batch),'prop':'imageinfo','iiprop':'url|mime|extmetadata','iiurlwidth':1000,'format':'json'}
+              details=json.loads(fetch('https://commons.wikimedia.org/w/api.php?'+urllib.parse.urlencode(q)))
+              for page in details.get('query',{}).get('pages',{}).values():
+                info=(page.get('imageinfo') or [{}])[0]
+                mime=(info.get('mime') or '').lower()
+                if not mime.startswith('image/'): continue
+                meta=info.get('extmetadata',{})
+                lic=html.unescape(meta.get('LicenseShortName',{}).get('value',''))
+                if not lic or re.search(r'non.?commercial|no.?derivatives|\bNC\b|\bND\b',lic,re.I): continue
+                url=info.get('thumburl') or info.get('url','')
+                if not url or url in seen_urls: continue
+                seen_urls.add(url)
+                found.append({'url':url,'mime':mime,'title':page.get('title',''),'license':lic,'page':info.get('descriptionurl',''),'query':query,'scene':scene_no})
+              time.sleep(2)
+            return found
+
           for idx,scene in enumerate(scenes,1):
-            query=scene['visual_query'].strip();print(f'SCENE {idx} QUERY:',query)
-            params={'action':'query','list':'search','srsearch':query,'srnamespace':6,'srlimit':15,'format':'json'}
-            try:
-              search=json.loads(fetch('https://commons.wikimedia.org/w/api.php?'+urllib.parse.urlencode(params)))
-              titles=[x['title'] for x in search.get('query',{}).get('search',[]) if x.get('title') not in seen_titles];seen_titles.update(titles)
-              candidates=[]
-              for offset in range(0,len(titles),10):
-                batch=titles[offset:offset+10]
-                if not batch:continue
-                q={'action':'query','titles':'|'.join(batch),'prop':'imageinfo','iiprop':'url|extmetadata','iiurlwidth':960,'format':'json'}
-                details=json.loads(fetch('https://commons.wikimedia.org/w/api.php?'+urllib.parse.urlencode(q)))
-                for page in details.get('query',{}).get('pages',{}).values():
-                  info=(page.get('imageinfo') or [{}])[0];meta=info.get('extmetadata',{});lic=meta.get('LicenseShortName',{}).get('value','')
-                  if not lic or re.search(r'Non.?Commercial|No.?Derivatives|\bNC\b|\bND\b',lic,re.I):continue
-                  url=info.get('thumburl') or info.get('url','')
-                  if url and url not in seen_urls:seen_urls.add(url);candidates.append({'url':url,'title':page.get('title',''),'license':lic,'page':info.get('descriptionurl',''),'query':query,'scene':idx})
-              got=0
-              for c in candidates:
-                try:
-                  raw=fetch(c['url'],tries=3)
-                  if len(raw)<1200:continue
-                  p=Path(f'commons_assets/scene{idx:02}_image{got+1}.jpg');p.write_bytes(raw)
-                  chk=subprocess.run(['ffmpeg','-v','error','-i',str(p),'-frames:v','1','-f','null','-'],capture_output=True)
-                  if chk.returncode:p.unlink(missing_ok=True);continue
-                  c['local']=str(p);valid.append(c);got+=1;print('Validated:',c['title'])
-                  if got>=2:break
-                except Exception as e:print('Asset skipped:',e)
-              time.sleep(1)
-            except Exception as e:print('Scene query failed:',e)
+            base=scene['visual_query'].strip()
+            topic_clean=topic.strip()
+            queries=[
+              base,
+              base+' photo',
+              topic_clean+' '+(['location aerial photograph','historical map photograph','archaeological artifacts museum','historical daily life people','ruins excavation site','present day site photograph'][idx-1])
+            ]
+            candidates=[]
+            for query in queries:
+              try:
+                print(f'SCENE {idx} SEARCH:',query)
+                titles=search_titles(query)
+                print(f'SCENE {idx} search returned {len(titles)} file records')
+                candidates.extend(get_candidates(titles,query,idx))
+                if len(candidates)>=2: break
+              except Exception as e:
+                print(f'Scene {idx} query failed: {type(e).__name__}: {e}')
+              time.sleep(4)
+            got=0
+            for c in candidates:
+              try:
+                raw=fetch(c['url'],tries=4)
+                if len(raw)<1200: continue
+                suffix=mime_ext.get(c['mime'],'.img')
+                with tempfile.NamedTemporaryFile(suffix=suffix,delete=False) as tmp:
+                  tmp.write(raw); source=tmp.name
+                dest=Path(f'commons_assets/scene{idx:02}_image{got+1}.jpg')
+                conv=subprocess.run(['ffmpeg','-y','-v','error','-i',source,'-frames:v','1','-q:v','2',str(dest)],capture_output=True,text=True)
+                Path(source).unlink(missing_ok=True)
+                if conv.returncode or not dest.exists() or dest.stat().st_size<1200:
+                  dest.unlink(missing_ok=True)
+                  print('Skipped non-decodable image:',c['title'])
+                  continue
+                c['local']=str(dest)
+                valid.append(c);got+=1
+                print('Validated image:',c['title'],'|',c['mime'],'|',c['license'])
+                if got>=2: break
+              except Exception as e:
+                print('Asset skipped:',type(e).__name__,str(e)[:180])
+              time.sleep(2)
+            print(f'SCENE {idx} FINAL IMAGE COUNT:',got)
+            time.sleep(5)
+
           counts={i:sum(1 for item in valid if item['scene']==i) for i in range(1,7)}
           missing=[i for i,count in counts.items() if count<1]
-          print('Per-scene asset counts:',counts)
+          print('Per-scene image counts:',counts)
           if missing:
-            raise SystemExit(f'Missing scene-specific assets for scenes: {missing}. Each of the 6 scenes must have at least 1 validated image before rendering starts.')
-          if len(valid)<6:raise SystemExit(f'Only {len(valid)} valid scene assets; minimum 6 required.')
+            raise SystemExit(f'Missing valid image assets for scenes: {missing}. Search retries and alternate queries were exhausted.')
           Path('output/commons_sources.json').write_text(json.dumps(valid,indent=2,ensure_ascii=False))
           Path('commons_assets/list.txt').write_text(','.join(c['local'] for c in valid))
-          print('Assets validated:',len(valid))
+          print('Total validated image assets:',len(valid))
+          PY
           PY
       - name: Render scene-locked clips and assemble timeline
         env:
