@@ -59,7 +59,7 @@ jobs:
           text=p.read_text()
           updates={
             "llm_provider": 'llm_provider = "ollama"',
-            "ollama_base_url": 'ollama_base_url = "http://127.0.0.1:11434"',
+            "ollama_base_url": 'ollama_base_url = "http://127.0.0.1:11434/v1"',
             "ollama_model_name": 'ollama_model_name = "qwen3:4b"',
           }
           for key,value in updates.items():
@@ -72,13 +72,13 @@ jobs:
           PY
           python - <<'PY'
           import json, urllib.request
-          payload=json.dumps({"model":"qwen3:4b","prompt":"Reply with exactly the word READY.","stream":False}).encode()
-          req=urllib.request.Request("http://127.0.0.1:11434/api/generate",data=payload,headers={"Content-Type":"application/json"})
+          payload=json.dumps({"model":"qwen3:4b","messages":[{"role":"user","content":"Reply with exactly the word READY."}],"stream":False}).encode()
+          req=urllib.request.Request("http://127.0.0.1:11434/v1/chat/completions",data=payload,headers={"Content-Type":"application/json"})
           with urllib.request.urlopen(req,timeout=180) as response:
             result=json.loads(response.read().decode())
-          if not result.get("response","").strip():
+          if not result.get("choices") or not result["choices"][0].get("message",{}).get("content","").strip():
             raise SystemExit("Ollama inference preflight returned empty output")
-          print("Ollama inference preflight passed; response received.")
+          print("Ollama OpenAI-compatible /v1/chat/completions preflight passed.")
           PY
       - name: Download and validate Commons images
         env:
