@@ -22,6 +22,14 @@ on:
           - portrait
           - landscape
         default: portrait
+      video_source:
+        description: "Stock footage provider"
+        required: true
+        type: choice
+        options:
+          - pixabay
+          - pexels
+        default: pixabay
 jobs:
   produce:
     runs-on: ubuntu-latest
@@ -42,26 +50,38 @@ jobs:
       - name: Create production config
         env:
           PEXELS_KEY: ${{ secrets.PEXELS_API_KEY }}
+          PIXABAY_KEY: ${{ secrets.PIXABAY_API_KEY }}
           MOONSHOT_KEY: ${{ secrets.MOONSHOT_API_KEY }}
+          VIDEO_SOURCE: ${{ inputs.video_source }}
         run: |
-          if [ -z "$PEXELS_KEY" ]; then echo "Missing PEXELS_API_KEY repository secret"; exit 1; fi
           if [ -z "$MOONSHOT_KEY" ]; then echo "Missing MOONSHOT_API_KEY repository secret"; exit 1; fi
+          if [ "$VIDEO_SOURCE" = "pixabay" ] && [ -z "$PIXABAY_KEY" ]; then
+            echo "Missing PIXABAY_API_KEY repository secret (or choose pexels)"
+            exit 1
+          fi
+          if [ "$VIDEO_SOURCE" = "pexels" ] && [ -z "$PEXELS_KEY" ]; then
+            echo "Missing PEXELS_API_KEY repository secret (or choose pixabay)"
+            exit 1
+          fi
           python - <<'PY'
+          import json
           import os
           from pathlib import Path
-          pex=os.environ['PEXELS_KEY'].replace('"','\\\"')
-          moon=os.environ['MOONSHOT_KEY'].replace('"','\\\"')
-          config=f'''log_level = "INFO"
+
+          source = os.environ["VIDEO_SOURCE"]
+          config = f"""log_level = "INFO"
           listen_host = "127.0.0.1"
           listen_port = 8080
-          video_source = "pexels"
-          pexels_api_keys = ["{pex}"]
+          video_source = {json.dumps(source)}
+          pexels_api_keys = [{json.dumps(os.environ.get("PEXELS_KEY", ""))}]
+          pixabay_api_keys = [{json.dumps(os.environ.get("PIXABAY_KEY", ""))}]
+          match_materials_to_script = true
           llm_provider = "moonshot"
-          moonshot_api_key = "{moon}"
+          moonshot_api_key = {json.dumps(os.environ["MOONSHOT_KEY"])}
           moonshot_base_url = ""
           moonshot_model_name = ""
-          '''
-          Path('config.toml').write_text(config)
+          """
+          Path("config.toml").write_text(config, encoding="utf-8")
           PY
       - name: Generate video using upstream MoneyPrinterTurbo CLI
         env:
@@ -69,10 +89,11 @@ jobs:
           LANGUAGE: ${{ inputs.language }}
           PARAGRAPHS: ${{ inputs.paragraphs }}
           ASPECT: ${{ inputs.aspect }}
+          VIDEO_SOURCE: ${{ inputs.video_source }}
         run: |
           mkdir -p output
           if [ "$ASPECT" = "landscape" ]; then RATIO="16:9"; else RATIO="9:16"; fi
-          python cli.py --video-subject "$TOPIC" --video-language "$LANGUAGE" --paragraph-number "$PARAGRAPHS" --video-source pexels --video-aspect "$RATIO" --stop-at video
+          python cli.py --video-subject "$TOPIC" --video-language "$LANGUAGE" --paragraph-number "$PARAGRAPHS" --video-source "$VIDEO_SOURCE" --video-aspect "$RATIO" --match-materials-to-script --stop-at video
           python - <<'PY'
           from pathlib import Path
           import shutil
