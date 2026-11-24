@@ -172,18 +172,21 @@ jobs:
 
           scenes=fallback
           try:
-            client=OpenAI(base_url='http://127.0.0.1:11434/v1',api_key='ollama',timeout=600,max_retries=0)
-            prompt=f"""Return one valid JSON object only. No markdown fences or explanation.
-          Required schema: {{"scenes":[{{"voiceover":"...","visual_query":"..."}}]}}
-          Create exactly 6 scenes for this documentary topic: {topic}
-          Script language: {language}
-          Each voiceover should be natural spoken narration, concrete, 1-2 sentences. Total target 100-140 words.
-          Avoid generic filler, repeated rhetorical questions, invented facts, and unsupported dates, quotes, or statistics.
-          Each visual_query must be a specific English search phrase for a photograph or image of the actual subject in that scene.
-          Sequence: hook, geographic context, people and evidence, daily life/development, ruins or consequence, surviving evidence/reveal.
-          Do not return any keys other than scenes, voiceover, and visual_query."""
-            response=client.chat.completions.create(model='qwen3:4b',messages=[{'role':'user','content':prompt}],temperature=0.1,max_tokens=1800)
-            raw=response.choices[0].message.content or ''
+            prompt=f"""Return a JSON object matching this schema exactly:
+          {{"scenes":[{{"voiceover":"...","visual_query":"..."}}]}}
+          Topic: {topic}
+          Language: {language}
+          Exactly 6 scenes. Each voiceover: natural spoken narration, 1-2 concrete sentences. Total 100-140 words.
+          No invented facts, unsupported dates, quotes, or statistics. visual_query must be a specific English image-search phrase for the actual scene subject.
+          Sequence: hook, location, people/evidence, daily life, consequences/ruins, surviving evidence.
+          Output JSON only; no commentary."""
+            payload=json.dumps({'model':'qwen3:4b','stream':False,'format':'json','think':False,'options':{'temperature':0.1,'num_predict':1800},'messages':[{'role':'user','content':prompt}]}).encode('utf-8')
+            req=urllib.request.Request('http://127.0.0.1:11434/api/chat',data=payload,headers={**headers,'Content-Type':'application/json'},method='POST')
+            with urllib.request.urlopen(req,timeout=600) as response:
+              model_result=json.loads(response.read().decode('utf-8'))
+            raw=(model_result.get('message') or {}).get('content','')
+            if not raw.strip():
+              raise ValueError('Ollama native API returned empty message content')
             parsed=extract_json(raw)
             candidate=parsed.get('scenes',[]) if isinstance(parsed,dict) else []
             if len(candidate)==6 and all(isinstance(x,dict) and isinstance(x.get('voiceover'),str) and x['voiceover'].strip() and isinstance(x.get('visual_query'),str) and x['visual_query'].strip() for x in candidate):
@@ -234,6 +237,15 @@ jobs:
               base+' photo',
               topic_clean+' '+(['location aerial photograph','historical map photograph','archaeological artifacts museum','historical daily life people','ruins excavation site','present day site photograph'][idx-1])
             ]
+            broad_queries={
+              1:['historic city aerial photograph','ancient city landscape photograph','historic settlement landscape'],
+              2:['historical map ancient city','old map historic city','ancient city map'],
+              3:['archaeological artifacts museum photograph','ancient pottery tools artifacts','archaeological objects museum'],
+              4:['historical people daily life illustration','ancient people daily life historical photograph','historic village people reconstruction'],
+              5:['ancient city ruins photograph','archaeological excavation ruins','abandoned historic city ruins','ancient settlement remains landscape'],
+              6:['ancient city ruins photograph','historic ruins landscape photograph','archaeological site remains photograph','abandoned ancient settlement ruins','ancient buildings ruins aerial']
+            }
+            queries.extend(broad_queries.get(idx,[]))
             candidates=[]
             for query in queries:
               try:
