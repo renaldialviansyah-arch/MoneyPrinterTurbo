@@ -105,9 +105,10 @@ jobs:
             raise SystemExit("MoneyPrinterTurbo LLM service preflight failed: unexpected response")
           print("MoneyPrinterTurbo service-level LLM preflight passed.")
           PY
-      - name: Download scene-targeted and validate Commons images
+      - name: Generate narrative and scene-specific Commons assets
         env:
           TOPIC: ${{ inputs.topic }}
+          LANGUAGE: ${{ inputs.language }}
         run: |
           set -euo pipefail
           mkdir -p commons_assets output
@@ -115,75 +116,85 @@ jobs:
           import urllib.request,urllib.parse,json,re,subprocess,os,time
           from pathlib import Path
           from openai import OpenAI
-          topic=os.environ['TOPIC']
-          headers={'User-Agent':'MoneyPrinterTurboCommonsWorkflow/5.0 (GitHub Actions; repository workflow)'}
+          topic=os.environ['TOPIC']; language=os.environ['LANGUAGE']
+          headers={'User-Agent':'MoneyPrinterTurboCommonsWorkflow/6.0 (GitHub Actions; documentary workflow)'}
           def fetch(url,tries=4):
             for attempt in range(tries):
               try:return urllib.request.urlopen(urllib.request.Request(url,headers=headers),timeout=30).read()
               except Exception as e:
                 print('retry',attempt+1,e)
                 if attempt==tries-1:raise
-                time.sleep(5*(attempt+1))
-          # Ask the local model for distinct, scene-specific image search terms.
-          prompt=f"""Create 6 distinct Wikimedia Commons image-search queries for a short documentary about: {topic}
-          Queries should cover different visual moments, not generic book/manuscript imagery:
-          location/geography, historical setting, people or daily life, important event/object,
-          decline/change, and present-day evidence/ruins (adapt as relevant to topic).
-          Return ONLY a JSON array of 6 short search queries, each 3-8 words, in English.
-          Avoid broad terms such as historical photographs, old book, manuscript unless truly relevant."""
-          queries=[]
-          try:
-            client=OpenAI(base_url='http://127.0.0.1:11434/v1',api_key='ollama',timeout=120,max_retries=0)
-            response=client.chat.completions.create(model='qwen3:4b',messages=[{'role':'user','content':prompt}],temperature=0.2)
-            raw=response.choices[0].message.content or ''
-            raw=re.sub(r'(?s)^.*?\[','[',raw,1)
-            raw=re.sub(r'\].*?$',' ]',raw,1)
-            parsed=json.loads(raw)
-            queries=[str(q).strip() for q in parsed if str(q).strip()][:6]
-          except Exception as e:
-            print('Scene query generation fallback:',e)
-          if len(queries)<3:
-            queries=[topic,topic+' historical location',topic+' archaeology',topic+' people daily life',topic+' ruins',topic+' map']
-          print('Scene-specific queries:',json.dumps(queries,ensure_ascii=False))
-          candidates=[];seen_titles=set();seen_urls=set()
-          for query in queries:
-            params={'action':'query','list':'search','srsearch':query,'srnamespace':6,'srlimit':20,'format':'json'}
+                time.sleep(4*(attempt+1))
+          client=OpenAI(base_url='http://127.0.0.1:11434/v1',api_key='ollama',timeout=180,max_retries=0)
+          # Create a spoken, scene-by-scene script plus a concrete search query for each scene.
+          prompt=f"""You are a documentary short-form writer and visual editor.
+          Topic: {topic}
+          Language: {language}
+          Create exactly 6 connected scenes for a short vertical documentary.
+          Return ONLY valid JSON: {{\"scenes\":[{{\"voiceover\":\"...\",\"visual_query\":\"...\"}}]}}.
+          Requirements:
+          - Write natural spoken narration, like a curious human telling a story, not an encyclopedia or AI essay.
+          - Use concrete subjects, actions, places, objects and evidence. Avoid vague dramatic filler and repeated rhetorical questions.
+          - Each scene voiceover is 1-3 short sentences; total target 130-170 words.
+          - Start with an intriguing concrete hook; progress chronologically or logically; end with a meaningful reveal.
+          - Do not invent unsupported dates, quotations, statistics or details. If unsure, phrase cautiously.
+          - Each visual_query is a specific English Wikimedia Commons search phrase for what that exact scene says.
+          - Visual queries must be image subjects (place, architecture, artifact, people, map, excavation, etc), never generic book/manuscript imagery.
+          - Queries must differ substantially from one another and follow the scene order.
+          """
+          response=client.chat.completions.create(model='qwen3:4b',messages=[{'role':'user','content':prompt}],temperature=0.35)
+          raw=response.choices[0].message.content or ''
+          raw=re.sub(r'(?s)^.*?\{','{',raw,1);raw=re.sub(r'\}.*?$','}',raw,1)
+          data=json.loads(raw); scenes=data.get('scenes',[])
+          if len(scenes)!=6: raise SystemExit(f'Expected exactly 6 scenes; model returned {len(scenes)}')
+          for scene in scenes:
+            if not scene.get('voiceover') or not scene.get('visual_query'):raise SystemExit('Scene JSON missing voiceover or visual query')
+          script='\n\n'.join(x['voiceover'].strip() for x in scenes)
+          Path('output/narrative_script.txt').write_text(script,encoding='utf-8')
+          Path('output/scenes.json').write_text(json.dumps(scenes,indent=2,ensure_ascii=False),encoding='utf-8')
+          print('Narrative script created; scenes:',len(scenes))
+          print(script)
+          seen_titles=set();seen_urls=set();valid=[]
+          # Search and download each scene in order, so the material list follows narrative order.
+          for idx,scene in enumerate(scenes,1):
+            query=scene['visual_query'].strip()
+            print(f'SCENE {idx} QUERY:',query)
+            params={'action':'query','list':'search','srsearch':query,'srnamespace':6,'srlimit':15,'format':'json'}
             try:
-              data=json.loads(fetch('https://commons.wikimedia.org/w/api.php?'+urllib.parse.urlencode(params)))
-              titles=[x['title'] for x in data.get('query',{}).get('search',[]) if x.get('title') not in seen_titles]
+              search=json.loads(fetch('https://commons.wikimedia.org/w/api.php?'+urllib.parse.urlencode(params)))
+              titles=[x['title'] for x in search.get('query',{}).get('search',[]) if x.get('title') not in seen_titles]
               seen_titles.update(titles)
+              candidates=[]
               for offset in range(0,len(titles),10):
                 batch=titles[offset:offset+10]
                 if not batch:continue
                 q={'action':'query','titles':'|'.join(batch),'prop':'imageinfo','iiprop':'url|extmetadata','iiurlwidth':960,'format':'json'}
-                data=json.loads(fetch('https://commons.wikimedia.org/w/api.php?'+urllib.parse.urlencode(q)))
-                for page in data.get('query',{}).get('pages',{}).values():
+                details=json.loads(fetch('https://commons.wikimedia.org/w/api.php?'+urllib.parse.urlencode(q)))
+                for page in details.get('query',{}).get('pages',{}).values():
                   info=(page.get('imageinfo') or [{}])[0];meta=info.get('extmetadata',{})
                   lic=meta.get('LicenseShortName',{}).get('value','')
                   if not lic or re.search(r'Non.?Commercial|No.?Derivatives|\bNC\b|\bND\b',lic,re.I):continue
                   url=info.get('thumburl') or info.get('url','')
                   if url and url not in seen_urls:
-                    seen_urls.add(url)
-                    candidates.append({'url':url,'title':page.get('title',''),'license':lic,'page':info.get('descriptionurl',''),'query':query})
+                    seen_urls.add(url);candidates.append({'url':url,'title':page.get('title',''),'license':lic,'page':info.get('descriptionurl',''),'query':query,'scene':idx})
+              # Keep 2 validated assets per scene when available; scenes are no longer pooled indiscriminately.
+              got=0
+              for c in candidates:
+                try:
+                  raw=fetch(c['url'],tries=3)
+                  if len(raw)<1200:continue
+                  p=Path(f'commons_assets/scene{idx:02}_image{got+1}.jpg');p.write_bytes(raw)
+                  chk=subprocess.run(['ffmpeg','-v','error','-i',str(p),'-frames:v','1','-f','null','-'],capture_output=True)
+                  if chk.returncode:p.unlink(missing_ok=True);continue
+                  c['local']=str(p);valid.append(c);got+=1;print('Validated scene asset:',c['title'])
+                  if got>=2:break
+                except Exception as e:print('Asset skipped:',e)
               time.sleep(1)
-            except Exception as e:print('Search query failed:',query,e)
-          # Download and validate diverse candidates; retain a generous set for scene mapping.
-          valid=[]
-          for c in candidates:
-            try:
-              raw=fetch(c['url'],tries=3)
-              if len(raw)<1200:continue
-              p=Path(f'commons_assets/image{len(valid)+1:02}.jpg');p.write_bytes(raw)
-              chk=subprocess.run(['ffmpeg','-v','error','-i',str(p),'-frames:v','1','-f','null','-'],capture_output=True)
-              if chk.returncode:p.unlink(missing_ok=True);continue
-              c['local']=str(p);valid.append(c);print('Validated:',c['title'],'| query:',c['query'])
-              if len(valid)>=12:break
-              time.sleep(0.5)
-            except Exception as e:print('Candidate skipped:',e)
-          if len(valid)<3:raise SystemExit(f'Only {len(valid)} valid images; scene-specific asset search/download failed or was filtered.')
+            except Exception as e:print('Scene search failed:',query,e)
+          if len(valid)<6:raise SystemExit(f'Insufficient scene assets: {len(valid)} validated, need at least 6.')
           Path('output/commons_sources.json').write_text(json.dumps(valid,indent=2,ensure_ascii=False))
           Path('commons_assets/list.txt').write_text(','.join(c['local'] for c in valid))
-          print('Scene-targeted Commons assets ready:',len(valid))
+          print('Scene assets ready:',len(valid),'across',len(scenes),'ordered scenes')
           PY
       - name: Generate video with MoneyPrinterTurbo
         env:
