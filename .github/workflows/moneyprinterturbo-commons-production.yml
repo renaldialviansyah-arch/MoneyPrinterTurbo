@@ -71,14 +71,22 @@ jobs:
           print("Ollama config verified; provider and model set.")
           PY
           python - <<'PY'
-          import json, urllib.request
-          payload=json.dumps({"model":"qwen3:4b","messages":[{"role":"user","content":"Reply with exactly the word READY."}],"stream":False}).encode()
-          req=urllib.request.Request("http://127.0.0.1:11434/v1/chat/completions",data=payload,headers={"Content-Type":"application/json"})
-          with urllib.request.urlopen(req,timeout=180) as response:
-            result=json.loads(response.read().decode())
-          if not result.get("choices") or not result["choices"][0].get("message",{}).get("content","").strip():
-            raise SystemExit("Ollama inference preflight returned empty output")
-          print("Ollama OpenAI-compatible /v1/chat/completions preflight passed.")
+          from openai import OpenAI
+          client=OpenAI(base_url="http://127.0.0.1:11434/v1", api_key="ollama", timeout=180, max_retries=0)
+          result=client.chat.completions.create(model="qwen3:4b",messages=[{"role":"user","content":"Reply with exactly the word READY."}],temperature=0)
+          content=result.choices[0].message.content if result.choices else ""
+          if not content or not content.strip(): raise SystemExit("SDK preflight returned empty output")
+          print("OpenAI SDK preflight passed; response:",content.strip()[:120])
+          PY
+          # Confirm the CLI configuration actually contains the same provider/base URL/model.
+          python - <<'PY'
+          import tomllib
+          from pathlib import Path
+          c=tomllib.loads(Path("config.toml").read_text())
+          expected={"llm_provider":"ollama","ollama_base_url":"http://127.0.0.1:11434/v1","ollama_model_name":"qwen3:4b"}
+          for k,v in expected.items():
+            if c.get(k)!=v: raise SystemExit(f"CLI config mismatch for {k}: {c.get(k)!r}")
+          print("CLI config audit passed: provider, URL, and model match the SDK preflight.")
           PY
       - name: Download and validate Commons images
         env:
