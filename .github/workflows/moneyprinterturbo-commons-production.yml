@@ -202,7 +202,8 @@ jobs:
           set -euo pipefail
           if [ "$ASPECT" = "landscape" ]; then RATIO="16:9"; else RATIO="9:16"; fi
           MATERIALS="$(cat commons_assets/list.txt)"
-          SCRIPT="$(cat output/narrative_script.txt)"\n          python cli.py --video-subject "$TOPIC" --video-script "$SCRIPT" --video-language "$LANGUAGE" --voice-name en-US-AriaNeural --voice-rate 1.04 --video-source local --video-materials "$MATERIALS" --video-aspect "$RATIO" --image-motion zoom --subtitle-enabled --stop-at video
+          SCRIPT="$(cat output/narrative_script.txt)"
+          python cli.py --video-subject "$TOPIC" --video-script "$SCRIPT" --video-language "$LANGUAGE" --voice-name en-US-AriaNeural --voice-rate 1.04 --video-source local --video-materials "$MATERIALS" --video-aspect "$RATIO" --image-motion zoom --subtitle-enabled --stop-at video
           python - <<'PY'
           from pathlib import Path
           import shutil
