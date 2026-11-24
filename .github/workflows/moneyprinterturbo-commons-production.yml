@@ -70,12 +70,14 @@ jobs:
           p.write_text(text)
           print("Ollama config verified; provider and model set.")
           PY
-          response="$(curl --fail --silent --show-error --max-time 180 http://127.0.0.1:11434/api/generate -H 'Content-Type: application/json' -d "{\\\"model\\\":\\\"qwen3:4b\\\",\\\"prompt\\\":\\\"Reply with exactly the word READY.\\\",\\\"stream\\\":false}")"
-          python - "$response" <<'PY'
-          import json,sys
-          d=json.loads(sys.argv[1])
-          text=d.get("response","").strip()
-          if not text: raise SystemExit("Ollama inference preflight returned empty output")
+          python - <<'PY'
+          import json, urllib.request
+          payload=json.dumps({"model":"qwen3:4b","prompt":"Reply with exactly the word READY.","stream":False}).encode()
+          req=urllib.request.Request("http://127.0.0.1:11434/api/generate",data=payload,headers={"Content-Type":"application/json"})
+          with urllib.request.urlopen(req,timeout=180) as response:
+            result=json.loads(response.read().decode())
+          if not result.get("response","").strip():
+            raise SystemExit("Ollama inference preflight returned empty output")
           print("Ollama inference preflight passed; response received.")
           PY
       - name: Download and validate Commons images
