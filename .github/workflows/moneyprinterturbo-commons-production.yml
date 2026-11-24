@@ -337,7 +337,7 @@ jobs:
             N=$(printf '%02d' "$i")
             ffmpeg -y -v error -i "output/scene_clips/scene${N}.mp4" -vf "scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,fps=30,setsar=1" -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p -c:a aac -b:a 192k -ar 44100 -ac 2 -movflags +faststart "output/normalized/scene${N}.mp4"
           done
-          printf "file '%s'\n" output/normalized/scene01.mp4 output/normalized/scene02.mp4 output/normalized/scene03.mp4 output/normalized/scene04.mp4 output/normalized/scene05.mp4 output/normalized/scene06.mp4 > output/concat.txt
+          printf "file '%s'\\n" normalized/scene01.mp4 normalized/scene02.mp4 normalized/scene03.mp4 normalized/scene04.mp4 normalized/scene05.mp4 normalized/scene06.mp4 > output/concat.txt
           ffmpeg -y -v error -f concat -safe 0 -i output/concat.txt -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p -c:a aac -b:a 192k -ar 44100 -ac 2 -movflags +faststart output/final.mp4
           ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1 output/final.mp4
       - name: Validate final video
