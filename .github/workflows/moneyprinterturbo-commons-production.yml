@@ -121,6 +121,8 @@ jobs:
 
           topic=os.environ['TOPIC']
           language=os.environ['LANGUAGE']
+          if 'petra' not in topic.lower():
+            raise SystemExit('This evidence-led test workflow is scoped to Petra. Set the topic to The Lost City of Petra.')
           headers={'User-Agent':'MoneyPrinterTurboCommonsWorkflow/8.0 (documentary video asset retrieval)'}
           def fetch(url,tries=5):
             for attempt in range(tries):
