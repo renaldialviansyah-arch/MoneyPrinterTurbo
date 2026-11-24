@@ -30,6 +30,16 @@ on:
           - pixabay
           - pexels
         default: pixabay
+      llm_provider:
+        description: "Text AI provider"
+        required: true
+        type: choice
+        options:
+          - openrouter
+          - groq
+          - gemini
+          - moonshot
+        default: openrouter
 jobs:
   produce:
     runs-on: ubuntu-latest
@@ -51,10 +61,13 @@ jobs:
         env:
           PEXELS_KEY: ${{ secrets.PEXELS_API_KEY }}
           PIXABAY_KEY: ${{ secrets.PIXABAY_API_KEY }}
+          OPENROUTER_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GROQ_KEY: ${{ secrets.GROQ_API_KEY }}
+          GEMINI_KEY: ${{ secrets.GEMINI_API_KEY }}
           MOONSHOT_KEY: ${{ secrets.MOONSHOT_API_KEY }}
           VIDEO_SOURCE: ${{ inputs.video_source }}
+          LLM_PROVIDER: ${{ inputs.llm_provider }}
         run: |
-          if [ -z "$MOONSHOT_KEY" ]; then echo "Missing MOONSHOT_API_KEY repository secret"; exit 1; fi
           if [ "$VIDEO_SOURCE" = "pixabay" ] && [ -z "$PIXABAY_KEY" ]; then
             echo "Missing PIXABAY_API_KEY repository secret (or choose pexels)"
             exit 1
@@ -63,12 +76,25 @@ jobs:
             echo "Missing PEXELS_API_KEY repository secret (or choose pixabay)"
             exit 1
           fi
+          case "$LLM_PROVIDER" in
+            openrouter) LLM_KEY="$OPENROUTER_KEY" ;;
+            groq) LLM_KEY="$GROQ_KEY" ;;
+            gemini) LLM_KEY="$GEMINI_KEY" ;;
+            moonshot) LLM_KEY="$MOONSHOT_KEY" ;;
+            *) echo "Unsupported LLM provider: $LLM_PROVIDER"; exit 1 ;;
+          esac
+          if [ -z "$LLM_KEY" ]; then
+            echo "Missing API key secret for selected provider: $LLM_PROVIDER"
+            exit 1
+          fi
+          export LLM_KEY
           python - <<'PY'
           import json
           import os
           from pathlib import Path
 
           source = os.environ["VIDEO_SOURCE"]
+          provider = os.environ["LLM_PROVIDER"]
           config = f"""log_level = "INFO"
           listen_host = "127.0.0.1"
           listen_port = 8080
@@ -76,10 +102,10 @@ jobs:
           pexels_api_keys = [{json.dumps(os.environ.get("PEXELS_KEY", ""))}]
           pixabay_api_keys = [{json.dumps(os.environ.get("PIXABAY_KEY", ""))}]
           match_materials_to_script = true
-          llm_provider = "moonshot"
-          moonshot_api_key = {json.dumps(os.environ["MOONSHOT_KEY"])}
-          moonshot_base_url = ""
-          moonshot_model_name = ""
+          llm_provider = {json.dumps(provider)}
+          {provider}_api_key = {json.dumps(os.environ["LLM_KEY"])}
+          {provider}_base_url = ""
+          {provider}_model_name = ""
           """
           Path("config.toml").write_text(config, encoding="utf-8")
           PY
