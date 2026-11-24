@@ -193,26 +193,46 @@ jobs:
           Path('commons_assets/list.txt').write_text(','.join(c['local'] for c in valid))
           print('Assets validated:',len(valid))
           PY
-      - name: Generate video with MoneyPrinterTurbo
+      - name: Render scene-locked clips and assemble timeline
         env:
           TOPIC: ${{ inputs.topic }}
           LANGUAGE: ${{ inputs.language }}
           ASPECT: ${{ inputs.aspect }}
         run: |
           set -euo pipefail
-          if [ "$ASPECT" = "landscape" ]; then RATIO="16:9"; else RATIO="9:16"; fi
-          MATERIALS="$(cat commons_assets/list.txt)"
-          SCRIPT="$(cat output/narrative_script.txt)"
-          python cli.py --video-subject "$TOPIC" --video-script "$SCRIPT" --video-language "$LANGUAGE" --voice-name en-US-AriaNeural --voice-rate 1.04 --video-source local --video-materials "$MATERIALS" --video-aspect "$RATIO" --image-motion zoom --subtitle-enabled --stop-at video
           python - <<'PY'
+          import json,subprocess,shutil,os
           from pathlib import Path
-          import shutil
-          files=list(Path('storage/tasks').rglob('*.mp4'))
-          if not files: raise SystemExit('No MP4 output found')
-          files.sort(key=lambda p:p.stat().st_mtime,reverse=True)
-          shutil.copy2(files[0],Path('output/final.mp4'))
-          print('Final MP4:',files[0])
+          scenes=json.loads(Path('output/scenes.json').read_text())
+          if len(scenes)!=6: raise SystemExit(f'Expected 6 scenes, got {len(scenes)}')
+          clips_dir=Path('output/scene_clips')
+          if clips_dir.exists(): shutil.rmtree(clips_dir)
+          clips_dir.mkdir(parents=True)
+          task_root=Path('storage/tasks')
+          for i,scene in enumerate(scenes,1):
+            assets=sorted(Path('commons_assets').glob(f'scene{i:02}_image*.jpg'))
+            if not assets: raise SystemExit(f'No scene-specific images for scene {i}')
+            script=scene['voiceover'].strip()
+            materials=','.join(str(p.resolve()) for p in assets)
+            cmd=['python','cli.py','--video-subject',os.environ['TOPIC'],'--video-script',script,'--video-language',os.environ['LANGUAGE'],'--voice-name','en-US-AriaNeural','--voice-rate','1.04','--video-source','local','--video-materials',materials,'--video-aspect','16:9' if os.environ['ASPECT']=='landscape' else '9:16','--image-motion','zoom','--subtitle-enabled','--stop-at','video']
+            print(f'RENDERING LOCKED SCENE {i}/6 with {len(assets)} assigned images')
+            subprocess.run(cmd,check=True)
+            files=list(task_root.rglob('*.mp4'))
+            if not files: raise SystemExit(f'No MP4 generated for scene {i}')
+            latest=max(files,key=lambda p:p.stat().st_mtime)
+            dest=clips_dir/f'scene{i:02}.mp4'
+            shutil.copy2(latest,dest)
+            print('Saved',dest)
           PY
+          if [ "$ASPECT" = "landscape" ]; then W=1920; H=1080; else W=1080; H=1920; fi
+          mkdir -p output/normalized
+          for i in 1 2 3 4 5 6; do
+            N=$(printf '%02d' "$i")
+            ffmpeg -y -v error -i "output/scene_clips/scene${N}.mp4" -vf "scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,fps=30,setsar=1" -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p -c:a aac -b:a 192k -ar 44100 -ac 2 -movflags +faststart "output/normalized/scene${N}.mp4"
+          done
+          printf "file '%s'\n" output/normalized/scene01.mp4 output/normalized/scene02.mp4 output/normalized/scene03.mp4 output/normalized/scene04.mp4 output/normalized/scene05.mp4 output/normalized/scene06.mp4 > output/concat.txt
+          ffmpeg -y -v error -f concat -safe 0 -i output/concat.txt -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p -c:a aac -b:a 192k -ar 44100 -ac 2 -movflags +faststart output/final.mp4
+          ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1 output/final.mp4
       - name: Validate final video
         run: |
           set -euo pipefail
