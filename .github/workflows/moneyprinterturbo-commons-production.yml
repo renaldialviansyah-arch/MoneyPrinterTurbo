@@ -186,7 +186,7 @@ jobs:
         run: |
           set -euo pipefail
           test -s output/final.mp4
-          ffprobe -v error -show_streams -show_format output/final.mp4 > output/probe.json
+          ffprobe -v error -of json -show_streams -show_format output/final.mp4 > output/probe.json
           python - <<'PY'
           import json
           d=json.load(open('output/probe.json'))
