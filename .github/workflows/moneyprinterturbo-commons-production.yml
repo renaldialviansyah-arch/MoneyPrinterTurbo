@@ -5,7 +5,7 @@ on:
       topic:
         description: "Video topic"
         required: true
-        default: "The mysterious history of forgotten cities"
+        default: "The Lost City of Petra"
       language:
         description: "Video script language"
         required: true
@@ -143,13 +143,22 @@ jobs:
                 time.sleep(min(45,4*(2**attempt)))
             raise RuntimeError('HTTP retries exhausted')
 
+          # Evidence pack for this Petra test, based on UNESCO and official Petra sources.
+          petra_facts=[
+            "Petra was the rock-cut capital of the Nabataeans in southern Jordan, between the Red Sea and the Dead Sea.",
+            "Petra became a major caravan crossroads linking Arabia, Egypt, and Syria-Phoenicia; trade included Arabian incense, Chinese silk, and Indian spices.",
+            "The Siq is a winding natural sandstone gorge leading to Petra; the famous Al-Khazneh facade is carved into the rock and is a monumental tomb.",
+            "Nabataean water engineering used channels, tunnels, dams, aqueducts, cisterns, and reservoirs to collect, divert, and store water in an arid landscape.",
+            "Petra contains remains from Nabataean, Roman, and Byzantine periods, including a colonnaded street, theatre, temples, churches, and tombs.",
+            "Petra was inscribed on the UNESCO World Heritage List in 1985; its sandstone monuments face erosion and require ongoing conservation."
+          ]
           fallback=[
-            {'voiceover':f"Imagine looking at {topic} from a different angle. The familiar story may leave out some important details.",'visual_query':topic+' location landscape photograph'},
-            {'voiceover':"First, look at the place where this story unfolded. Its geography helps explain what happened next.",'visual_query':topic+' historical location map photograph'},
-            {'voiceover':"The people who lived here left traces in objects, buildings, and the landscape itself.",'visual_query':topic+' archaeological artifacts ancient architecture photograph'},
-            {'voiceover':"Those traces help us reconstruct daily life, although some parts of the story remain uncertain.",'visual_query':topic+' historical people daily life reconstruction photograph'},
-            {'voiceover':"Later changes reshaped the place. Evidence of those changes can still be found in what survived.",'visual_query':topic+' ruins excavation archaeological site photograph'},
-            {'voiceover':"Today, these surviving traces are a reminder to distinguish what the evidence shows from what later stories claim.",'visual_query':topic+' modern archaeological site remains photograph'}
+            {'voiceover':"In southern Jordan, a city was carved into rose-red sandstone. Petra became the remarkable capital of the Nabataeans.",'visual_query':'Petra Jordan aerial view rose red sandstone archaeological city'},
+            {'voiceover':"Its narrow Siq gorge opens toward Al-Khazneh, the famous rock-cut monumental tomb. The route made the landscape part of the city experience.",'visual_query':'Petra Siq narrow sandstone gorge Al Khazneh Treasury facade'},
+            {'voiceover':"Petra was more than a dramatic façade. Caravan routes connected Arabia with Egypt and Syria, carrying incense, silk, and spices through this trading crossroads.",'visual_query':'Petra Nabataean caravan trade ancient incense silk spices archaeological relief'},
+            {'voiceover':"Survival in this dry landscape depended on engineering. Channels, tunnels, dams, and cisterns captured and stored precious water.",'visual_query':'Petra Nabataean ancient water channels cistern dam hydraulic engineering'},
+            {'voiceover':"The city changed across centuries. Nabataean monuments stand alongside Roman and Byzantine remains, including streets, a theatre, temples, and churches.",'visual_query':'Petra archaeological colonnaded street Roman theatre Byzantine church ruins'},
+            {'voiceover':"Petra did not simply disappear. Inscribed as a World Heritage Site in 1985, its sandstone monuments still need protection from erosion.",'visual_query':'Petra Jordan Ad Deir Monastery Royal Tombs sandstone conservation archaeology'}
           ]
 
           def extract_json(raw):
@@ -174,14 +183,21 @@ jobs:
 
           scenes=fallback
           try:
-            prompt=f"""Return a JSON object matching this schema exactly:
+            prompt=f"""Return one JSON object matching this schema exactly:
           {{"scenes":[{{"voiceover":"...","visual_query":"..."}}]}}
-          Topic: {topic}
-          Language: {language}
-          Exactly 6 scenes. Each voiceover: natural spoken narration, 1-2 concrete sentences. Total 100-140 words.
-          No invented facts, unsupported dates, quotes, or statistics. visual_query must be a specific English image-search phrase for the actual scene subject.
-          Sequence: hook, location, people/evidence, daily life, consequences/ruins, surviving evidence.
-          Output JSON only; no commentary."""
+          Documentary topic: {topic}
+          Narration language: {language}
+          Build a fact-led six-scene short specifically about Petra, Jordan. Use only the evidence below; do not invent details:
+          1. Petra is the Nabataean rock-cut capital in southern Jordan, between the Red Sea and Dead Sea.
+          2. It became a caravan crossroads linking Arabia, Egypt, and Syria-Phoenicia; trade included Arabian incense, Chinese silk, and Indian spices.
+          3. The Siq is a winding natural sandstone gorge leading to Petra. Al-Khazneh is a monumental rock-cut tomb facade.
+          4. Nabataean water infrastructure included channels, tunnels, diversion dams, aqueducts, cisterns, and reservoirs.
+          5. Petra preserves Nabataean, Roman, and Byzantine remains, including a colonnaded street, theatre, temples, and churches.
+          6. Petra entered the UNESCO World Heritage List in 1985. Its sandstone monuments face erosion and require conservation.
+          Exactly 6 scenes, in this order: location and hook; Siq and Al-Khazneh; caravan trade; water engineering; later Roman/Byzantine layers; heritage and conservation.
+          Each voiceover: 1-2 natural spoken sentences. Total 100-140 words. No generic filler, false claims that Petra is entirely lost or abandoned, unsupported dates, quotes, or statistics.
+          Each visual_query must name the actual Petra subject in that scene (Siq, Al-Khazneh, Nabataean water channels, colonnaded street, theatre, Byzantine church, Ad-Deir, Royal Tombs). Avoid unrelated generic historical imagery.
+          Output JSON only, no markdown or explanation."""
             payload=json.dumps({'model':'qwen3:4b','stream':False,'format':'json','think':False,'options':{'temperature':0.1,'num_predict':1800},'messages':[{'role':'user','content':prompt}]}).encode('utf-8')
             req=urllib.request.Request('http://127.0.0.1:11434/api/chat',data=payload,headers={**headers,'Content-Type':'application/json'},method='POST')
             with urllib.request.urlopen(req,timeout=600) as response:
@@ -243,12 +259,12 @@ jobs:
             base=clean_query(scene['visual_query'])
             topic_clean=clean_query(topic)
             scene_terms=[
-              ['ancient city aerial ruins landscape','historic city skyline architecture'],
-              ['ancient city historical map','old map city landscape'],
-              ['archaeological artifacts pottery museum','ancient tools ruins artifacts'],
-              ['ancient people daily life historical reenactment','historic village people traditional life'],
-              ['ancient ruins archaeological excavation','abandoned city ruins landscape'],
-              ['ancient ruins aerial photograph','historic archaeological site landscape']
+              ['Petra Jordan aerial view Nabataean city sandstone','Petra archaeological park landscape Jordan'],
+              ['Petra Siq gorge Al Khazneh rock cut tomb','Petra Treasury facade sandstone gorge'],
+              ['Nabataean Petra caravan trade incense silk spice','Petra ancient trade route caravan relief'],
+              ['Petra Nabataean water channels cisterns dams','Petra ancient water engineering aqueduct reservoir'],
+              ['Petra colonnaded street Roman theatre Byzantine church','Petra archaeological Roman Byzantine ruins'],
+              ['Petra Ad Deir Monastery Royal Tombs conservation','Petra sandstone monuments archaeological preservation']
             ][idx-1]
             queries=[base,clean_query(topic_clean+' '+scene_terms[0]),clean_query(scene_terms[1])]
             hits=[]
@@ -297,6 +313,12 @@ jobs:
           if missing:
             raise SystemExit(f'Pixabay could not provide valid images for scenes: {missing}. Adjust visual queries or verify Pixabay API access.')
           Path('output/pixabay_sources.json').write_text(json.dumps(valid,indent=2,ensure_ascii=False))
+          Path('output/research_facts.json').write_text(json.dumps({
+            'topic':'The Lost City of Petra',
+            'facts':petra_facts,
+            'sources':['https://whc.unesco.org/en/list/326/','https://www.visitpetra.jo/en/Trail/1','https://www.unesco.org/en/articles/preserving-petras-nabatean-architectural-heritage'],
+            'note':'Narrative evidence pack prepared from UNESCO World Heritage Centre and official Petra visitor information.'
+          },indent=2,ensure_ascii=False),encoding='utf-8')
           Path('commons_assets/list.txt').write_text(','.join(c['local'] for c in valid))
           print('Total validated Pixabay image assets:',len(valid))
           PY
