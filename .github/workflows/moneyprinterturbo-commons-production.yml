@@ -88,6 +88,21 @@ jobs:
             if c.get(k)!=v: raise SystemExit(f"CLI config mismatch for {k}: {c.get(k)!r}")
           print("CLI config audit passed: provider, URL, and model match the SDK preflight.")
           PY
+      - name: Preflight through MoneyPrinterTurbo LLM service
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from app.services.llm import _generate_response
+          from app.config import config
+          cfg=config.app
+          print("Provider:",cfg.get("llm_provider"))
+          print("Configured Ollama model:",cfg.get("ollama_model_name"))
+          print("Configured Ollama URL:",cfg.get("ollama_base_url"))
+          result=_generate_response("Reply with exactly PREFLIGHT_OK",request_timeout=120,max_retries=0)
+          if not result or "PREFLIGHT_OK" not in result:
+            raise SystemExit("MoneyPrinterTurbo LLM service preflight failed: unexpected response")
+          print("MoneyPrinterTurbo service-level LLM preflight passed.")
+          PY
       - name: Download and validate Commons images
         env:
           TOPIC: ${{ inputs.topic }}
